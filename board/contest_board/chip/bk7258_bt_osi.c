@@ -1636,13 +1636,6 @@ static void bt_osi_rs_deinit(void)
 
 static void bt_osi_ble_vote_rf_ctrl(uint8_t cmd)
 {
-  /* Logged because the closed PHY announced "phy on; rf off" while
-   * switching the synthesiser, and whether the radio is ever voted
-   * open for bluetooth decides whether a keyed transmitter has
-   * anything behind it.
-   */
-
-  syslog(LOG_INFO, "bt: rf vote %u\n", cmd);
   rf_module_vote_ctrl(cmd, BT_OSI_RF_BY_BLE_BIT);
 }
 

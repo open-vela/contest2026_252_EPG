@@ -22,3 +22,6 @@ out/
 # Python 缓存
 __pycache__/
 *.pyc
+
+# bk_flash.py 在仓库根写的烧录日志
+bk_flash_dev_*.log

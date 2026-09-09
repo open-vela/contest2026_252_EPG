@@ -127,12 +127,20 @@ void up_irqinitialize(void)
   uintptr_t regaddr;
   int i;
 
-  /* Disable and clear every peripheral interrupt. */
+  /* Disable and clear every peripheral interrupt, at both gates.  Clearing
+   * the SoC routing matrix as well as the NVIC matters because the Beken
+   * bootloader hands over with its own lines still routed -- UART0 at least
+   * -- and up_disable_irq() clears both, so an init that only cleared the
+   * NVIC would leave the two gates disagreeing for every line we never
+   * touch.  Nothing is lost by clearing it: up_enable_irq() sets the matrix
+   * bit back when a driver claims the line.
+   */
 
   for (i = 0; i < BK7258_IRQ_NEXTINTS; i += 32)
     {
       putreg32(0xffffffff, NVIC_IRQ_CLEAR(i));
       putreg32(0xffffffff, NVIC_IRQ_CLRPEND(i));
+      putreg32(0, BK7258_SYS_CPU0_INT_EN(i));
     }
 
   /* Point the NVIC at our vector table. */
@@ -187,7 +195,13 @@ void up_irqinitialize(void)
   irq_attach(NVIC_IRQ_SVCALL, arm_svcall, NULL);
   irq_attach(NVIC_IRQ_HARDFAULT, arm_hardfault, NULL);
 
-  /* SVCall has to stay above the BASEPRI mask level. */
+  /* SVCall has to stay above the BASEPRI mask level.  Both values come from
+   * arch/arm_m/nvicpri.h: SVCall lands one step below the default (0x40)
+   * while up_irq_save() raises BASEPRI to NVIC_SYSH_DISABLE_PRIORITY, which
+   * is the default itself (0x80).  Every peripheral interrupt is left at the
+   * default by the loop above, so a critical section masks all of them and
+   * still lets a system call through.
+   */
 
   bk7258_prioritize_syscall(NVIC_SYSH_SVCALL_PRIORITY);
 

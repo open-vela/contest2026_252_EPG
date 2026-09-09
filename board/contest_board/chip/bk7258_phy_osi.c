@@ -69,6 +69,7 @@
 #include <nuttx/config.h>
 
 #include <errno.h>
+#include <inttypes.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -694,6 +695,14 @@ extern void delay_us(uint32_t us);
 
 static void *g_phy_nv_reg_hook;
 
+/* The library's own hook installer and the callback it should carry.  Both
+ * are in archives this image already links -- bk_phy_set_nv_reg_hook in
+ * libwifi.a, nv_phy_reg_set_by_chan_bw in libcom_phy.a.
+ */
+
+extern void bk_phy_set_nv_reg_hook(void *hook);
+extern void nv_phy_reg_set_by_chan_bw(void);
+
 /****************************************************************************
  * Private Functions
  ****************************************************************************/
@@ -751,6 +760,21 @@ static uint32_t phy_ana_get_field(int n, uint32_t pos, uint32_t mask)
  *
  ****************************************************************************/
 
+/* Temporary, for the "PHY is off during a scan" measurement.  bkreg shows
+ * pwd_wifp_phy set and phy_cken clear at idle, during a scan, and while
+ * rxsens spins -- so something switches the radio off and nothing switches
+ * it back.  This names the caller instead of inferring it.  The return
+ * address is the closed library's call site; resolve it against
+ * cmake_out/contest2026_252_board_xts/nuttx.
+ */
+
+static void phy_pwr_trace(const char *what, unsigned int module,
+                          uint32_t state, void *ra)
+{
+  syslog(LOG_INFO, "phytrace: %s(%u,%" PRIu32 ") ra=%p\n",
+         what, module, state, ra);
+}
+
 static int phy_power_domain_ctrl(unsigned int module, uint32_t power_state)
 {
   uint32_t bit;
@@ -790,6 +814,8 @@ static int phy_power_domain_ctrl(unsigned int module, uint32_t power_state)
 
 static uint32_t phy_modem_clk_ctrl(bool clk_en)
 {
+  phy_pwr_trace("modem_clk", 27, clk_en, __builtin_return_address(0));
+
   modifyreg32(PHY_SYS_CLK_EN,
               clk_en ? 0 : PHY_CKEN_PHY,
               clk_en ? PHY_CKEN_PHY : 0);
@@ -806,11 +832,41 @@ static uint32_t phy_modem_bus_clk_ctrl(bool clk_en)
  * Name: phy_osi_wifi_* / phy_osi_no_wifi_*
  *
  * Description:
- *   Wi-Fi is not built into this image.  The four register-window getters
- *   return NULL, which is what the vendor returns with CONFIG_WIFI_ENABLE
- *   off, and the media-mode probe reports "off".  The point of answering
- *   rather than leaving them NULL is that the honest answer to "is Wi-Fi
+ *   Written when Wi-Fi was not in the image: the four register-window getters
+ *   returned NULL, which is what the vendor returns with CONFIG_WIFI_ENABLE
+ *   off, and the media-mode probe reported "off".  The point of answering
+ *   rather than leaving them NULL was that the honest answer to "is Wi-Fi
  *   holding the radio" must be no, never an unmapped call.
+ *
+ *   In configs/xts Wi-Fi *is* in the image, and the four getters now forward
+ *   to the real windows (see the CONFIG_BK7258_WIFI_VENDOR branch below).
+ *   phy_osi_wifi_media_mode() still returns 0 -- the vendor's own default
+ *   when no media mode has been configured -- which is correct here but is
+ *   no longer "Wi-Fi is absent", so do not reason from that premise.
+ *
+ ****************************************************************************/
+
+/****************************************************************************
+ * Name: phy_osi_null_reg_api and the four register-API accessors
+ *
+ * Description:
+ *   phy_adapter_init() does not just take this table -- it calls four of
+ *   its entries and stores what they return into g_mpb_funcs_t,
+ *   g_crm_funcs_t, g_riu_funcs_t and g_phy_funcs_t.  Those are the PHY's
+ *   own register APIs, and the closed calibration code reaches through
+ *   them by offset: rwnx_tpc_get_pwridx_by_rate() loads g_phy_funcs_t,
+ *   takes the function pointer at +260 and branches to it.
+ *
+ *   Returning NULL here is correct for a BLE-only image -- BLE never
+ *   touches those APIs, and Beken's own wrapper returns NULL too when
+ *   CONFIG_WIFI_ENABLE is off.  With WiFi in the image it is not: the
+ *   stored NULL turns into a branch through [NULL + 260], which arrives as
+ *   an instruction access violation inside closed code with nothing naming
+ *   the table.
+ *
+ *   The four real accessors live in libwifi.a.  Nothing else references
+ *   them, so naming them here is also what keeps --gc-sections from
+ *   collecting them.
  *
  ****************************************************************************/
 
@@ -818,6 +874,43 @@ static void *phy_osi_null_reg_api(void)
 {
   return NULL;
 }
+
+#ifdef CONFIG_BK7258_WIFI_VENDOR
+extern void *mpb_reg_api(void);
+extern void *crm_reg_api(void);
+extern void *riu_reg_api(void);
+extern void *mix_funcs(void);
+
+static void *phy_osi_mpb_reg_api(void)
+{
+  return mpb_reg_api();
+}
+
+static void *phy_osi_crm_reg_api(void)
+{
+  return crm_reg_api();
+}
+
+static void *phy_osi_riu_reg_api(void)
+{
+  return riu_reg_api();
+}
+
+static void *phy_osi_mix_funcs(void)
+{
+  return mix_funcs();
+}
+
+#  define PHY_OSI_MPB_REG_API  phy_osi_mpb_reg_api
+#  define PHY_OSI_CRM_REG_API  phy_osi_crm_reg_api
+#  define PHY_OSI_RIU_REG_API  phy_osi_riu_reg_api
+#  define PHY_OSI_MIX_FUNCS    phy_osi_mix_funcs
+#else
+#  define PHY_OSI_MPB_REG_API  phy_osi_null_reg_api
+#  define PHY_OSI_CRM_REG_API  phy_osi_null_reg_api
+#  define PHY_OSI_RIU_REG_API  phy_osi_null_reg_api
+#  define PHY_OSI_MIX_FUNCS    phy_osi_null_reg_api
+#endif
 
 static uint8_t phy_osi_wifi_media_mode(void)
 {
@@ -865,9 +958,34 @@ static uint8_t phy_osi_wifi_media_mode(void)
  *
  ****************************************************************************/
 
+/****************************************************************************
+ * Name: phy_osi_nv_reg_set_hook
+ *
+ * Description:
+ *   Install the library's per-channel register-set callback.
+ *
+ *   This used to park the pointer in a static nothing reads -- the comment
+ *   above g_phy_nv_reg_hook said so out loud.  That is very likely why the
+ *   receiver hears nothing: phy_init() and mdm_set_channel() both NULL-check
+ *   nv_phy_reg_set_func_ptr and silently skip when it is unset, so the RIU
+ *   CCA and packet-detect thresholds are never programmed on any channel.
+ *   A radio with no detect threshold scans happily and reports
+ *   "recv frame is zero" on every one.
+ *
+ *   The real installer is bk_phy_set_nv_reg_hook(), which lives in libwifi.a.
+ *   Only the WiFi configs link that archive, so the call is gated the same
+ *   way as the one in bk7258_phy_adapter_init(); without the gate the nsh
+ *   config fails to link, which it did from 5ad4798 until this gate was
+ *   added.
+ *
+ ****************************************************************************/
+
 static void phy_osi_nv_reg_set_hook(void *hook)
 {
   g_phy_nv_reg_hook = hook;
+#ifdef CONFIG_BK7258_WIFI_VENDOR
+  bk_phy_set_nv_reg_hook(hook);
+#endif
 }
 
 /****************************************************************************
@@ -1173,8 +1291,16 @@ static float phy_osi_saradc_calculate(UINT16 adc_val)
  *
  *   The PHY clock and power entries are real: they are on the radio path,
  *   not the sleep path.  The vendor reference-counts these votes in its
- *   power manager; with BLE as the only radio user in this image there is
- *   exactly one voter, so writing the gate directly is equivalent.
+ *   power manager.
+ *
+ *   This used to say "with BLE as the only radio user in this image there is
+ *   exactly one voter, so writing the gate directly is equivalent".  That was
+ *   true when the file was written and is not true in configs/xts, where Wi-Fi
+ *   is a second voter.  It turns out not to matter, but by luck rather than by
+ *   design: rf_module_vote_ctrl does its own reference counting one level up,
+ *   on a holder bitmask, and only reaches these entries when the mask empties.
+ *   Measured on the board -- rwnxl_sleep closes the vote and rwnxl_wakeup
+ *   reopens it, and the PHY is powered and clocked for the whole of a scan.
  *
  ****************************************************************************/
 
@@ -1191,6 +1317,9 @@ static int phy_osi_pm_phy_pwrup(void)
 
 static int phy_osi_pm_vote_power_phy(int32_t value)
 {
+  phy_pwr_trace("vote_phy", PHY_PWR_MODULE_WIFI_PHY, (uint32_t)value,
+                __builtin_return_address(0));
+
   return phy_power_domain_ctrl(PHY_PWR_MODULE_WIFI_PHY, (uint32_t)value);
 }
 
@@ -1677,7 +1806,16 @@ static void phy_osi_shell_set_log_level(int level)
 
 static int phy_osi_phy_log_enabled(void)
 {
-  return 0;
+  /* On for bring-up.  This gate is the closed PHY library's own narration --
+   * calibration steps, RF configuration, and every manual_cal_* flash
+   * diagnostic.  With it off those messages are not merely quiet, they are
+   * suppressed at every syslog level, which is why the flash calibration
+   * failures were invisible until they were reasoned out.
+   *
+   * Turn it back off once the receiver works; it is chatty.
+   */
+
+  return 1;
 }
 
 /****************************************************************************
@@ -1984,12 +2122,18 @@ static void phy_osi_ble_tx_testmode_retrig(void)
 static void phy_osi_rf_module_power_ctrl(unsigned int module,
                                          uint32_t power_state)
 {
+  phy_pwr_trace("rf_module", module, power_state,
+                __builtin_return_address(0));
+
   phy_power_domain_ctrl(module, power_state);
 }
 
 static bk_err_t phy_osi_rf_pm_vote_power(unsigned int module,
                                          uint32_t power_state)
 {
+  phy_pwr_trace("rf_vote", module, power_state,
+                __builtin_return_address(0));
+
   return phy_power_domain_ctrl(module, power_state);
 }
 
@@ -1998,9 +2142,26 @@ static bk_err_t phy_osi_rf_pm_vote_power(unsigned int module,
  *
  * Description:
  *   Stub pair.  Both switch the Wi-Fi modem between DSSS-only and full
- *   OFDM reception while bluetooth holds the radio; with no Wi-Fi modem in
- *   this image there is nothing to narrow.  The vendor compiles its bodies
- *   out under the same condition.
+ *   OFDM reception while bluetooth holds the radio.
+ *
+ *   The original reason given here -- "no Wi-Fi modem in this image, and the
+ *   vendor compiles its bodies out under the same condition" -- is wrong for
+ *   configs/xts.  bk_rf_adapter.c:27-46 guards them on CONFIG_WIFI_ENABLE,
+ *   which is on, so the vendor calls the real phy_exit_dsss_only() /
+ *   phy_enter_dsss_only() from libwifi.a (phy_karst_bk7236.c.obj).
+ *
+ *   Stubbing them is nevertheless harmless, for a different reason, and this
+ *   one is checked rather than assumed -- disassembled out of the archive:
+ *   both bodies are gated on dsss_only_flag, which lives in .bss and is set
+ *   only by phy_enter_dsss_only itself.  At boot the flag is 0, so the real
+ *   phy_exit_dsss_only returns without touching the modem, and the only
+ *   thing our stub skips on the enter side is setting RIU 0x4980b390 bit 9.
+ *   Net effect: this port never narrows the receiver to DSSS, where the
+ *   vendor would while BLE holds the radio.  That is more receive capability,
+ *   not less, so it is not a candidate for "recv frame is zero".
+ *
+ *   Wire them for real before shipping Wi-Fi/BLE coexistence, where the
+ *   narrowing is the point.
  *
  ****************************************************************************/
 
@@ -2020,14 +2181,72 @@ static void phy_osi_dsss_only_stub(void)
  * probes whose honest answer is "absent", not "present and does nothing".
  */
 
+/****************************************************************************
+ * Rate-sensitivity and EVM entries
+ *
+ * These were NULL, justified by "absent, as the vendor leaves them with
+ * CONFIG_WIFI_ENABLE off".  That premise is false for this build:
+ * sdkconfig.h on the vendor include path has CONFIG_WIFI_ENABLE 1, and
+ * Beken's own g_phy_os_funcs assigns all eight unconditionally, with no
+ * wrapper and no guard.
+ *
+ * Leaving them NULL is not merely incomplete, it is eight armed traps: the
+ * consumers do "ldr r3,[rX,#off]; blx r3" with no NULL test, and rxsens
+ * (do_rx_sensitivity) and txevm (do_evm) are live registered console
+ * commands in this image.
+ *
+ * They are wired now for a second reason.  The receiver currently reports
+ * zero frames on all thirteen channels and takes no RX-trigger interrupt at
+ * all; rxsens is the vendor's own receiver test, and it is a far more
+ * direct instrument than reading more disassembly.
+ *
+ * Note _evm_init takes evm_phy_init -- the field name and the symbol name
+ * do not match, and there is no symbol called evm_init.  Note also that
+ * _evm_set_ke_evt_mac_bit and _evm_clear_ke_evt_mac_bit must be wired
+ * together; one without the other arms half of the KE_EVT_MAC path.
+ *
+ * All eight live in libwifi.a, already linked.
+ *
+ ****************************************************************************/
+
+#ifdef CONFIG_BK7258_WIFI_VENDOR
+extern void rs_init(uint32_t channel, int32_t band, uint32_t mode);
+extern void rs_bypass_mac_init(uint32_t channel, int32_t band,
+                               uint32_t mode);
+extern void rs_deinit(void);
+extern void evm_phy_init(uint32_t channel, int32_t band, uint32_t bw);
+extern void evm_bypass_mac_init(uint32_t freq, int32_t band, uint32_t bw);
+extern void evm_clear_ke_evt_mac_bit(void);
+extern void evm_set_ke_evt_mac_bit(void);
+extern void tx_evm_set_chan_ctxt_pop(void *chan_info);
+
+#  define PHY_OSI_RS_INIT            rs_init
+#  define PHY_OSI_RS_BYPASS_MAC_INIT rs_bypass_mac_init
+#  define PHY_OSI_RS_DEINIT          rs_deinit
+#  define PHY_OSI_EVM_INIT           evm_phy_init
+#  define PHY_OSI_EVM_BYPASS_MAC     evm_bypass_mac_init
+#  define PHY_OSI_EVM_CLR_KE_EVT     evm_clear_ke_evt_mac_bit
+#  define PHY_OSI_EVM_SET_KE_EVT     evm_set_ke_evt_mac_bit
+#  define PHY_OSI_TX_EVM_CHAN_POP    tx_evm_set_chan_ctxt_pop
+#else
+#  define PHY_OSI_RS_INIT            NULL
+#  define PHY_OSI_RS_BYPASS_MAC_INIT NULL
+#  define PHY_OSI_RS_DEINIT          NULL
+#  define PHY_OSI_EVM_INIT           NULL
+#  define PHY_OSI_EVM_BYPASS_MAC     NULL
+#  define PHY_OSI_EVM_CLR_KE_EVT     NULL
+#  define PHY_OSI_EVM_SET_KE_EVT     NULL
+#  define PHY_OSI_TX_EVM_CHAN_POP    NULL
+#endif
+
 phy_os_funcs_t g_phy_os_funcs =
 {
   ._version                          = PHY_OSI_VERSION,
 
-  ._mpb_reg_api                      = phy_osi_null_reg_api,
-  ._crm_reg_api                      = phy_osi_null_reg_api,
-  ._riu_reg_api                      = phy_osi_null_reg_api,
-  ._mix_funcs                        = phy_osi_null_reg_api,
+  ._mpb_reg_api                      = PHY_OSI_MPB_REG_API,
+  ._crm_reg_api                      = PHY_OSI_CRM_REG_API,
+  ._riu_reg_api                      = PHY_OSI_RIU_REG_API,
+  ._mix_funcs                        = PHY_OSI_MIX_FUNCS,
   ._bk_misc_get_reset_reason         = phy_osi_get_reset_reason,
 
   /* Wi-Fi rate-sensitivity and EVM test entries: absent, as the vendor
@@ -2038,15 +2257,15 @@ phy_os_funcs_t g_phy_os_funcs =
    * filled in.
    */
 
-  ._rs_init                          = NULL,
-  ._rs_bypass_mac_init               = NULL,
-  ._rs_deinit                        = NULL,
-  ._evm_init                         = NULL,
-  ._evm_bypass_mac_init              = NULL,
+  ._rs_init                          = PHY_OSI_RS_INIT,
+  ._rs_bypass_mac_init               = PHY_OSI_RS_BYPASS_MAC_INIT,
+  ._rs_deinit                        = PHY_OSI_RS_DEINIT,
+  ._evm_init                         = PHY_OSI_EVM_INIT,
+  ._evm_bypass_mac_init              = PHY_OSI_EVM_BYPASS_MAC,
   ._nv_phy_reg_set_hook              = phy_osi_nv_reg_set_hook,
-  ._evm_clear_ke_evt_mac_bit         = NULL,
-  ._evm_set_ke_evt_mac_bit           = NULL,
-  ._tx_evm_set_chan_ctxt_pop         = NULL,
+  ._evm_clear_ke_evt_mac_bit         = PHY_OSI_EVM_CLR_KE_EVT,
+  ._evm_set_ke_evt_mac_bit           = PHY_OSI_EVM_SET_KE_EVT,
+  ._tx_evm_set_chan_ctxt_pop         = PHY_OSI_TX_EVM_CHAN_POP,
   ._save_info_item                   = NULL,
   ._get_info_item                    = NULL,
 
@@ -2336,6 +2555,22 @@ rf_variable_t g_rf_variable =
 int bk7258_phy_adapter_init(void)
 {
   phy_adapter_init(&g_phy_os_funcs, &g_phy_os_variable);
+
+  /* Install the per-channel register-set callback ourselves rather than
+   * waiting for the library to do it.
+   *
+   * In Beken's own build nv_init() calls back through the table's
+   * _nv_phy_reg_set_hook slot.  The nv_init() this image links comes from
+   * libcom_phy.a -- the Wi-Fi-OFF variant -- and its whole body is "bx lr",
+   * so the slot is never invoked no matter how correctly it is filled.
+   * Calling the installer directly is archive-order-neutral and avoids
+   * pulling in libbk_phy.a for one function.
+   */
+
+#ifdef CONFIG_BK7258_WIFI_VENDOR
+  bk_phy_set_nv_reg_hook((void *)nv_phy_reg_set_by_chan_bw);
+#endif
+
   return PHY_OK;
 }
 

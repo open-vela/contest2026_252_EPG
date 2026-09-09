@@ -31,12 +31,19 @@
 #include <debug.h>
 
 #include <nuttx/arch.h>
+#include <nuttx/clock.h>
 #include <nuttx/irq.h>
+#ifdef CONFIG_ALARM_ARCH
+#  include <assert.h>
+#  include <nuttx/timers/oneshot.h>
+#  include <nuttx/timers/arch_alarm.h>
+#endif
 
 #include <arch/board/board.h>
 
 #include "arm_internal.h"
 
+#include "bk7258_rtc.h"
 #include "bk7258_wdt.h"
 #include "nvic.h"
 
@@ -69,6 +76,7 @@
  * Name: bk7258_timerisr
  ****************************************************************************/
 
+#ifndef CONFIG_ALARM_ARCH
 static int bk7258_timerisr(int irq, uint32_t *regs, void *arg)
 {
   /* Reading the control register clears the count flag. */
@@ -84,15 +92,32 @@ static int bk7258_timerisr(int irq, uint32_t *regs, void *arg)
 
   static unsigned int decimate = 0;
 
-  if (++decimate >= 10)
+  if (++decimate >= BK7258_WDT_HEARTBEAT_TICKS)
     {
       decimate = 0;
-      bk7258_wdt_arm(BK7258_WDT_PERIOD_RUN);
+      bk7258_wdt_service();
     }
+
+#ifdef CONFIG_BK7258_RTC
+  /* Close the AON RTC's 32-bit wrap window.  The counter wraps every 36.4
+   * hours; sampling it once a second is four orders of magnitude of margin
+   * for one AON read, and it costs a hundredth of what the watchdog feed
+   * above already costs.
+   */
+
+  static unsigned int rtc_decimate = 0;
+
+  if (++rtc_decimate >= MSEC2TICK(1000))
+    {
+      rtc_decimate = 0;
+      bk7258_rtc_poll();
+    }
+#endif
 
   nxsched_process_timer();
   return OK;
 }
+#endif /* !CONFIG_ALARM_ARCH */
 
 /****************************************************************************
  * Public Functions
@@ -106,6 +131,21 @@ static int bk7258_timerisr(int irq, uint32_t *regs, void *arg)
  *
  ****************************************************************************/
 
+#ifdef CONFIG_ALARM_ARCH
+void up_timer_initialize(void)
+{
+  FAR struct oneshot_lowerhalf_s *lower = bk7258_oneshot_initialize();
+
+  /* No time base means no scheduler.  Say so rather than limping on with a
+   * clock that never advances -- that failure mode looks like a hang and
+   * costs hours to trace back here.
+   */
+
+  DEBUGASSERT(lower != NULL);
+
+  up_alarm_set_lowerhalf(lower);
+}
+#else
 void up_timer_initialize(void)
 {
   uint32_t regval;
@@ -125,3 +165,4 @@ void up_timer_initialize(void)
 
   up_enable_irq(NVIC_IRQ_SYSTICK);
 }
+#endif /* CONFIG_ALARM_ARCH */

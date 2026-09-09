@@ -50,6 +50,26 @@
 #  include <nuttx/sdio.h>
 #  include <nuttx/mmcsd.h>
 #endif
+#ifdef CONFIG_BK7258_RTC
+#  include <nuttx/timers/rtc.h>
+#  include "bk7258_rtc.h"
+#endif
+#ifdef CONFIG_BK7258_WDT
+#  include "bk7258_wdt.h"
+#endif
+#ifdef CONFIG_BK7258_TIMER
+#  include "bk7258_timer.h"
+#endif
+#ifdef CONFIG_BK7258_BATTERY
+#  include "bk7258_battery.h"
+#endif
+#ifdef CONFIG_BK7258_FLASH
+#  include <nuttx/mtd/mtd.h>
+#  include "bk7258_flash.h"
+#endif
+#ifdef CONFIG_BK7258_WIFI
+#  include "bk7258_wifi.h"
+#endif
 
 /****************************************************************************
  * Public Functions
@@ -78,6 +98,38 @@ int board_app_initialize(uintptr_t arg)
     }
 #endif
 
+#ifdef CONFIG_FS_TMPFS
+  /* A writable scratch filesystem.  Nothing in the demo apps needs one, but
+   * anything that writes a temporary file does: both the xTS scanf case and
+   * the syscall suite fail at the first open() without it, and the SD card
+   * is not a given (it holds the vendor's artwork and may be absent).
+   * RAM-backed keeps it out of the way of both.
+   */
+
+  ret = nx_mount(NULL, "/tmp", "tmpfs", 0, NULL);
+  if (ret < 0)
+    {
+      syslog(LOG_ERR, "ERROR: Failed to mount tmpfs at /tmp: %d\n", ret);
+    }
+
+#ifdef CONFIG_BLUETOOTH_SERVICE
+  /* The Bluetooth service keeps its adapter properties and bond database
+   * under a hard-coded /data/misc/bt (service/common/storage.c), and it
+   * only mkdir()s the last two components -- without /data the create
+   * fails with ENOENT and the daemon carries the failed handle into a
+   * bus fault.  RAM-backed is the honest choice here: bonds do not have
+   * to survive a power cycle for anything this board does yet, and the
+   * SD card is not a given.
+   */
+
+  ret = nx_mount(NULL, "/data", "tmpfs", 0, NULL);
+  if (ret < 0)
+    {
+      syslog(LOG_ERR, "ERROR: Failed to mount tmpfs at /data: %d\n", ret);
+    }
+#endif
+#endif
+
 #ifdef CONFIG_USERLED_LOWER
   ret = userled_lower_initialize("/dev/userleds");
   if (ret < 0)
@@ -91,6 +143,93 @@ int board_app_initialize(uintptr_t arg)
   if (ret < 0)
     {
       syslog(LOG_ERR, "ERROR: btn_lower_initialize: %d\n", ret);
+    }
+#endif
+
+#ifdef CONFIG_BK7258_RTC
+  /* The counter itself came up in board_late_initialize(); this only
+   * publishes the same lower half as a character device.  If that never
+   * succeeded there is nothing to publish and saying so is more useful
+   * than an empty /dev/rtc0.
+   */
+
+    {
+      FAR struct rtc_lowerhalf_s *rtclower = bk7258_rtc_lowerhalf();
+
+      if (rtclower == NULL)
+        {
+          syslog(LOG_WARNING, "rtc: lower half unavailable, no /dev/rtc0\n");
+        }
+      else
+        {
+          ret = rtc_initialize(0, rtclower);
+          if (ret < 0)
+            {
+              syslog(LOG_ERR, "ERROR: rtc_initialize: %d\n", ret);
+            }
+        }
+    }
+#endif
+
+#ifdef CONFIG_BK7258_WDT
+  ret = bk7258_wdt_lowerhalf_initialize("/dev/watchdog0");
+  if (ret < 0)
+    {
+      syslog(LOG_ERR, "ERROR: bk7258_wdt_lowerhalf_initialize: %d\n", ret);
+    }
+#endif
+
+#ifdef CONFIG_BK7258_WIFI
+  ret = bk7258_wifi_initialize();
+  if (ret < 0)
+    {
+      syslog(LOG_ERR, "ERROR: bk7258_wifi_initialize: %d\n", ret);
+    }
+#endif
+
+#ifdef CONFIG_BK7258_TIMER
+  ret = bk7258_timer_oneshot_register("/dev/oneshot0");
+  if (ret < 0)
+    {
+      syslog(LOG_ERR, "ERROR: bk7258_timer_oneshot_register: %d\n", ret);
+    }
+#endif
+
+#ifdef CONFIG_BK7258_BATTERY
+  ret = bk7258_battery_register("/dev/batt0");
+  if (ret < 0)
+    {
+      syslog(LOG_ERR, "ERROR: bk7258_battery_register: %d\n", ret);
+    }
+#endif
+
+#ifdef CONFIG_BK7258_FLASH
+    {
+      FAR struct mtd_dev_s *mtd = bk7258_flash_initialize();
+
+      if (mtd == NULL)
+        {
+          syslog(LOG_ERR, "ERROR: bk7258_flash_initialize failed\n");
+        }
+      else
+        {
+          /* The raw MTD first, then a block device on top of it.  Both are
+           * useful: the xTS driver cases talk to /dev/mtd0 directly, while
+           * anything wanting a filesystem needs /dev/mtdblock0.
+           */
+
+          ret = register_mtddriver("/dev/mtd0", mtd, 0666, NULL);
+          if (ret < 0)
+            {
+              syslog(LOG_ERR, "ERROR: register_mtddriver: %d\n", ret);
+            }
+
+          ret = ftl_initialize(0, mtd);
+          if (ret < 0)
+            {
+              syslog(LOG_ERR, "ERROR: ftl_initialize: %d\n", ret);
+            }
+        }
     }
 #endif
 
@@ -242,6 +381,24 @@ int board_app_initialize(uintptr_t arg)
       if (ret < 0)
         {
           syslog(LOG_ERR, "ERROR: mmcsd_slotinitialize: %d\n", ret);
+        }
+    }
+#endif
+
+#ifdef CONFIG_BK7258_HCI_TRANSPORT
+    {
+      /* The H4 transport the openvela Bluetooth service expects to
+       * find.  Registering the node costs nothing and touches no
+       * radio: the controller has to be brought up separately, and
+       * traffic only starts when something opens the device.
+       */
+
+      extern int bk7258_hci_register(FAR const char *path);
+
+      ret = bk7258_hci_register(NULL);
+      if (ret < 0)
+        {
+          syslog(LOG_ERR, "ERROR: bk7258_hci_register: %d\n", ret);
         }
     }
 #endif

@@ -16,6 +16,7 @@ Usage:
     bk_flash.py <image> <start_addr_hex> [port]
     bk_flash.py --read <outfile> <start_hex> <len_hex> [port]
 """
+import glob
 import os
 import subprocess
 import sys
@@ -27,7 +28,28 @@ LINK = b"\x01\xe0\xfc\x01\x00"
 RESP = b"\x04\x0e"
 LINK_BAUDS = [115200, 1500000]
 XFER_BAUD = 1500000
-DEFAULT_PORT = "/dev/cu.usbserial-310"
+PORT_GLOB = "/dev/cu.usbserial-*"
+
+
+def default_port():
+    """Find the CH340, rather than assuming what it was called last time.
+
+    The node name is assigned by the OS at enumeration and is not stable
+    across a replug: this board has appeared as both usbserial-310 and
+    usbserial-10 in one session.  A hard-coded name turns that into a silent
+    twenty-minute hang, because wait_for_chip() below blocks on
+    os.path.exists() for a node that will never come back.  Ask the system
+    instead, and say plainly when there is nothing to talk to.
+    """
+    ports = sorted(glob.glob(PORT_GLOB))
+
+    if not ports:
+        sys.exit("no %s found -- is the board plugged in?" % PORT_GLOB)
+
+    if len(ports) > 1:
+        print("multiple serial ports %s, using %s" % (ports, ports[0]))
+
+    return ports[0]
 
 
 def wait_for_chip(port, baud=115200, announce_every=2000, reboot=False):
@@ -105,7 +127,7 @@ def main():
 
     if argv and argv[0] == "--read":
         out_file, start, length = argv[1], argv[2], argv[3]
-        port = argv[4] if len(argv) > 4 else DEFAULT_PORT
+        port = argv[4] if len(argv) > 4 else default_port()
         wait_for_chip(port, reboot=reboot)
         ok = run_bk_loader([
             "read", "-p", port, "-b", str(XFER_BAUD), "--reset_type", "3",
@@ -114,7 +136,7 @@ def main():
     else:
         image = argv[0]
         start = argv[1]
-        port = argv[2] if len(argv) > 2 else DEFAULT_PORT
+        port = argv[2] if len(argv) > 2 else default_port()
         print(f"image : {image}  {os.path.getsize(image)} bytes")
         print(f"target: {start}")
         wait_for_chip(port, reboot=reboot)

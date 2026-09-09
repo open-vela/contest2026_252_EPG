@@ -121,23 +121,25 @@
 
 #define NR_IRQS                 (NVIC_IRQ_FIRST + BK7258_IRQ_NEXTINTS)
 
-/* NVIC priority levels */
+/* NVIC priority levels.  The STAR-MC1 core in this part implements three
+ * priority bits, bits[7:5] -- __NVIC_PRIO_BITS is 3 in the Beken SDK's
+ * cmsis/CMSIS_5/Device/Beken/armstar/armstar.h.  So bits[7:6] carry the
+ * group priority and bit[5] the sub-priority.
+ *
+ * NVIC_SYSH_MAXNORMAL_PRIORITY, NVIC_SYSH_DISABLE_PRIORITY and
+ * NVIC_SYSH_SVCALL_PRIORITY are deliberately NOT defined here.  Every other
+ * armv8-m chip leaves them to arch/arm_m/nvicpri.h, which derives them from
+ * the values below and is pulled in by arch/arm_m/irq.h -- that is, after
+ * this file.  Anything defined here would be silently redefined there (the
+ * redefinition warning is suppressed because both headers arrive via
+ * -isystem), so a local definition looks authoritative while having no
+ * effect at all.
+ */
 
 #define NVIC_SYSH_PRIORITY_MIN      0xff /* All bits set in minimum priority */
 #define NVIC_SYSH_PRIORITY_DEFAULT  0x80 /* Midpoint is the default */
 #define NVIC_SYSH_PRIORITY_MAX      0x00 /* Zero is maximum priority */
-#define NVIC_SYSH_PRIORITY_STEP     0x40 /* Steps between supported priority */
-
-/* If CONFIG_ARMV8M_USEBASEPRI is selected, then interrupts will be disabled
- * by setting the BASEPRI register to NVIC_SYSH_DISABLE_PRIORITY, so that
- * priority levels above that value are never masked.  SVCall must sit at the
- * highest priority so that a system call can still be taken while ordinary
- * interrupts are masked.
- */
-
-#define NVIC_SYSH_MAXNORMAL_PRIORITY \
-  (NVIC_SYSH_PRIORITY_MAX + NVIC_SYSH_PRIORITY_STEP)
-#define NVIC_SYSH_DISABLE_PRIORITY  NVIC_SYSH_MAXNORMAL_PRIORITY
-#define NVIC_SYSH_SVCALL_PRIORITY   NVIC_SYSH_PRIORITY_MAX
+#define NVIC_SYSH_PRIORITY_STEP     0x40 /* bits[7:6] as group priority */
+#define NVIC_SYSH_PRIORITY_SUBSTEP  0x20 /* bit[5] as sub-priority */
 
 #endif /* __BOARD_CONTEST_BOARD_CHIP_INCLUDE_IRQ_H */

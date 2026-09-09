@@ -90,14 +90,6 @@ def main() -> int:
     with open(args.infile, "rb") as handle:
         data = handle.read()
 
-    # Tail guard: the ICache prefetches sequentially past the last real
-    # instruction, and a fetch that lands in flash the packer never wrote
-    # reads a CRC-invalid block and hangs the bus (boot lived or died on
-    # a 536-byte size difference before this).  4 KB of valid padding
-    # puts the cliff out of prefetch reach forever.
-
-    data = data + b"\xff" * 4096
-
     if args.verify:
         bad = verify(data)
         blocks = len(data) // BLOCK_TOTAL
@@ -106,6 +98,19 @@ def main() -> int:
 
     if not args.outfile:
         parser.error("outfile is required unless --verify is given")
+
+    # Tail guard: the ICache prefetches sequentially past the last real
+    # instruction, and a fetch that lands in flash the packer never wrote
+    # reads a CRC-invalid block and hangs the bus (boot lived or died on
+    # a 536-byte size difference before this).  4 KB of valid padding
+    # puts the cliff out of prefetch reach forever.
+    #
+    # This belongs to encoding only.  It used to be applied to whatever was
+    # read, which meant --verify padded an already-encoded image and then
+    # rejected it for not being a multiple of the block size -- the self
+    # check in the board README could never pass.
+
+    data = data + b"\xff" * 4096
 
     encoded = encode(data)
     with open(args.outfile, "wb") as handle:

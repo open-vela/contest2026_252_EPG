@@ -487,15 +487,16 @@ void __start(void)
 
   earlymark('W');
 
-  /* Black-box playback.  The serial interrupt handler drops breadcrumbs at
-   * a fixed address in SRAM3 -- outside everything this image links or
-   * heaps, and preserved across a watchdog reset.  If the previous life
-   * ended in the wedge this port is chasing, its last moments are still
-   * there; print them before this run overwrites anything.
+  /* Black-box playback.  The serial interrupt handler drops breadcrumbs
+   * just above the linked SRAM region -- outside everything this image
+   * links or heaps, and preserved across a watchdog reset.  If the previous
+   * life ended in the wedge this port is chasing, its last moments are
+   * still there; print them before this run overwrites anything.
    */
 
   {
-    volatile uint32_t *bb = (volatile uint32_t *)0x28048000;
+    extern uint32_t _bbnote[];
+    volatile uint32_t *bb = (volatile uint32_t *)_bbnote;
 
     if (bb[0] == 0xb1acb0c5)
       {

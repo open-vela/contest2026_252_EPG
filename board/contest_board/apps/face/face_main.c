@@ -16,10 +16,12 @@
 
 #include <sys/mount.h>
 #include <fcntl.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <poll.h>
 #include <time.h>
 #include <unistd.h>
 #include <pthread.h>
@@ -705,6 +707,577 @@ int main(int argc, char *argv[])
       return 0;
     }
 
+  if (argc > 1 && strcmp(argv[1], "HCIT") == 0)
+    {
+      /* What the transport saw.  The driver records the opening frames
+       * without touching the console -- printing from the controller's
+       * own callback thread was itself enough to change where a host
+       * bring-up stalled -- so the dialogue is read back here instead.
+       */
+
+      extern void bk7258_hci_trace_dump(void);
+
+      bk7258_hci_trace_dump();
+      return 0;
+    }
+
+  if (argc > 1 && strcmp(argv[1], "PSKEEP") == 0)
+    {
+      /* Leave controller power save alone for the next bring-up, so the
+       * scan that used to work can be measured against the sleeping
+       * controller as well as the awake one.
+       */
+
+      extern void bk7258_bt_ps_keep(void);
+
+      bk7258_bt_ps_keep();
+      printf("face: power save will be left on for the next BT bring-up\n");
+      return 0;
+    }
+
+  if (argc > 1 && strcmp(argv[1], "HCILS") == 0)
+    {
+      /* Legacy LE scan over raw HCI, as a control for the extended one.
+       *
+       * Through the Bluetooth service the controller accepts
+       * LE_Set_Extended_Scan_Parameters and _Enable with status zero and
+       * then reports nothing, exactly as it accepts the extended
+       * advertising commands and radiates nothing.  If the same radio
+       * hears advertisers when asked with the 4.0 opcodes, the
+       * difference is the API generation and not the radio -- which
+       * decides whether the problem to solve is in the host's
+       * configuration or in the analogue chain.
+       */
+
+      static const uint8_t params[] =
+      {
+        0x01, 0x0b, 0x20, 0x07,        /* LE_Set_Scan_Parameters */
+        0x00,                          /* passive */
+        0x10, 0x00,                    /* interval 16 x 0.625ms */
+        0x10, 0x00,                    /* window   16 x 0.625ms */
+        0x00,                          /* own address: public */
+        0x00                           /* accept all */
+      };
+
+      static const uint8_t enable[] =
+      {
+        0x01, 0x0c, 0x20, 0x02,        /* LE_Set_Scan_Enable */
+        0x01,                          /* enable */
+        0x00                           /* no duplicate filtering */
+      };
+
+      static const uint8_t disable[] =
+      {
+        0x01, 0x0c, 0x20, 0x02, 0x00, 0x00
+      };
+
+      uint8_t buf[256];
+      int fd;
+      int waited;
+      int reports = 0;
+      int other = 0;
+
+      fd = open("/dev/ttyHCI0", O_RDWR | O_NONBLOCK);
+      if (fd < 0)
+        {
+          printf("face: /dev/ttyHCI0 open failed: %d\n", errno);
+          return 1;
+        }
+
+      while (read(fd, buf, sizeof(buf)) > 0);
+
+      write(fd, params, sizeof(params));
+      usleep(300000);
+      write(fd, enable, sizeof(enable));
+
+      for (waited = 0; waited < 6000; waited += 50)
+        {
+          int n = read(fd, buf, sizeof(buf));
+          int off = 0;
+
+          while (n > 0 && off + 3 <= n)
+            {
+              int flen = 3 + buf[off + 2];
+
+              if (off + flen > n)
+                {
+                  break;
+                }
+
+              if (buf[off + 1] == 0x3e)
+                {
+                  reports++;
+                }
+              else
+                {
+                  other++;
+                }
+
+              off += flen;
+            }
+
+          usleep(50000);
+        }
+
+      write(fd, disable, sizeof(disable));
+      close(fd);
+
+      printf("face: legacy scan -> %d advertising reports, %d other events\n",
+             reports, other);
+      printf("face: verdict: %s\n",
+             reports > 0 ? "radio hears with the 4.0 opcodes" :
+                           "silent with legacy opcodes too");
+      return 0;
+    }
+
+  if (argc > 1 && strcmp(argv[1], "NOPS") == 0)
+    {
+      /* Take the controller out of power save.
+       *
+       * enter_normal_app_mode()'s loop reads "if (ble_ps_enabled())
+       * rwip_sleep();" before every rwip_schedule(), and ble_ps_enable_set()
+       * turns that on unconditionally at start of day -- it ignores its
+       * argument and stores 1.  The timing says the same thing from the
+       * outside: an LE read answers in 0 ms until the host sends
+       * HCI_Reset, and in seconds afterwards, which is what a controller
+       * that went idle and now wakes on a timer looks like.
+       */
+
+      extern void ble_ps_enable_clear(void);
+      extern int ble_ps_enabled(void);
+
+      printf("face: ble power save was %d\n", ble_ps_enabled());
+      ble_ps_enable_clear();
+      printf("face: ble power save now %d\n", ble_ps_enabled());
+      return 0;
+    }
+
+  if (argc > 1 && strcmp(argv[1], "HCIP") == 0)
+    {
+      /* Is the transport's poll() wakeup real?
+       *
+       * Every command the controller answers asynchronously takes
+       * exactly 10.000 s to reach the Bluetooth service, while the ones
+       * it answers inside write() -- HCI_Reset, and the BR/EDR opcodes
+       * it rejects outright -- arrive in 0 ms.  The same command read
+       * back through a plain read() loop also arrives immediately.  The
+       * service is the only consumer that waits in poll(), so this asks
+       * poll() the same question directly: a wakeup that takes seconds
+       * when the data was there in milliseconds is a driver bug, not a
+       * controller one.
+       */
+
+      struct pollfd pfd;
+      uint8_t le[4] = { 0x01, 0x03, 0x20, 0x00 };
+      uint8_t evt[64];
+      struct timespec t0;
+      struct timespec t1;
+      int fd;
+      int ret;
+      long ms;
+
+      fd = open("/dev/ttyHCI0", O_RDWR);
+      if (fd < 0)
+        {
+          printf("face: /dev/ttyHCI0 open failed: %d\n", errno);
+          return 1;
+        }
+
+      write(fd, le, sizeof(le));
+
+      pfd.fd     = fd;
+      pfd.events = POLLIN;
+
+      clock_gettime(CLOCK_MONOTONIC, &t0);
+      ret = poll(&pfd, 1, 20000);
+      clock_gettime(CLOCK_MONOTONIC, &t1);
+
+      ms = (t1.tv_sec - t0.tv_sec) * 1000 +
+           (t1.tv_nsec - t0.tv_nsec) / 1000000;
+
+      printf("face: poll -> %d, revents 0x%x, after %ldms\n",
+             ret, pfd.revents, ms);
+
+      if (ret > 0)
+        {
+          int n = read(fd, evt, sizeof(evt));
+          printf("face: read %d bytes, evt %02x\n", n, n > 1 ? evt[1] : 0);
+        }
+
+      close(fd);
+      return 0;
+    }
+
+  if (argc > 1 && strcmp(argv[1], "HCIX") == 0)
+    {
+      /* The same before/after-reset question as HCIR, decoded instead of
+       * weighed.  HCIR counted bytes and called a late HCI_Reset
+       * completion an LE answer, which is how it reached the wrong
+       * verdict; an opcode is not something you can mistake for another
+       * opcode.  Every frame that arrives is printed with the command it
+       * completes.
+       */
+
+      uint8_t le[4]  = { 0x01, 0x03, 0x20, 0x00 };
+      uint8_t rst[4] = { 0x01, 0x03, 0x0c, 0x00 };
+      uint8_t buf[192];
+      int fd;
+      int phase;
+
+      fd = open("/dev/ttyHCI0", O_RDWR | O_NONBLOCK);
+      if (fd < 0)
+        {
+          printf("face: /dev/ttyHCI0 open failed: %d\n", errno);
+          return 1;
+        }
+
+      while (read(fd, buf, sizeof(buf)) > 0);
+
+      for (phase = 0; phase < 3; phase++)
+        {
+          static const char *what[3] =
+            {
+              "LE_Read_Local_Features (before reset)",
+              "HCI_Reset",
+              "LE_Read_Local_Features (after reset)"
+            };
+
+          int budget = (phase == 0) ? 6000 : 12000;
+          int waited;
+          int seen = 0;
+
+          write(fd, phase == 1 ? rst : le, 4);
+          printf("face: --- %s ---\n", what[phase]);
+
+          for (waited = 0; waited < budget; waited += 50)
+            {
+              int n = read(fd, buf, sizeof(buf));
+              int off = 0;
+
+              while (n > 0 && off + 3 <= n)
+                {
+                  int flen = 3 + buf[off + 2];
+
+                  if (off + flen > n)
+                    {
+                      break;
+                    }
+
+                  if (buf[off + 1] == 0x0e && flen >= 7)
+                    {
+                      printf("face:   +%dms complete op %02x%02x status %02x\n",
+                             waited, buf[off + 5], buf[off + 4],
+                             buf[off + 6]);
+                    }
+                  else
+                    {
+                      printf("face:   +%dms evt %02x len %d\n",
+                             waited, buf[off + 1], flen);
+                    }
+
+                  seen++;
+                  off += flen;
+                }
+
+              usleep(50000);
+            }
+
+          if (seen == 0)
+            {
+              printf("face:   (nothing in %dms)\n", budget);
+            }
+        }
+
+      close(fd);
+      return 0;
+    }
+
+  if (argc > 1 && strcmp(argv[1], "HCIR") == 0)
+    {
+      /* Does HCI_Reset over the raw path cost the LE side?
+       *
+       * HCIK ruled out any gating: LE_Read_Local_Supported_Features
+       * answers on its own in well under a second when it is the first
+       * thing sent.  The Zephyr host sends the same command and never
+       * hears back -- and the one thing it does first that HCIK does not
+       * is HCI_Reset.  This controller is normally driven by Beken's own
+       * host, so a reset that no vendor re-initialisation follows is
+       * exactly the kind of thing the raw path would leave half done.
+       *
+       * Ask the same LE question twice, once either side of a reset.
+       */
+
+      uint8_t le[4]  = { 0x01, 0x03, 0x20, 0x00 };   /* LE_Read_Local_Features */
+      uint8_t rst[4] = { 0x01, 0x03, 0x0c, 0x00 };   /* HCI_Reset */
+      uint8_t evt[96];
+      int fd;
+      int before;
+      int reset;
+      int after;
+      int waited;
+
+      fd = open("/dev/ttyHCI0", O_RDWR | O_NONBLOCK);
+      if (fd < 0)
+        {
+          printf("face: /dev/ttyHCI0 open failed: %d\n", errno);
+          return 1;
+        }
+
+      while (read(fd, evt, sizeof(evt)) > 0);
+
+      write(fd, le, sizeof(le));
+      before = 0;
+      for (waited = 0; waited < 4000; waited += 50)
+        {
+          int k = read(fd, evt, sizeof(evt));
+          if (k > 0)
+            {
+              before += k;
+            }
+
+          usleep(50000);
+        }
+
+      write(fd, rst, sizeof(rst));
+      reset = 0;
+      for (waited = 0; waited < 3000; waited += 50)
+        {
+          int k = read(fd, evt, sizeof(evt));
+          if (k > 0)
+            {
+              reset += k;
+            }
+
+          usleep(50000);
+        }
+
+      write(fd, le, sizeof(le));
+      after = 0;
+      for (waited = 0; waited < 8000; waited += 50)
+        {
+          int k = read(fd, evt, sizeof(evt));
+          if (k > 0)
+            {
+              after += k;
+            }
+
+          usleep(50000);
+        }
+
+      printf("face: LE before reset -> %d bytes\n", before);
+      printf("face: reset itself    -> %d bytes\n", reset);
+      printf("face: LE after reset  -> %d bytes\n", after);
+      printf("face: verdict: %s\n",
+             (before > 0 && after == 0) ? "HCI_Reset kills the LE side" :
+             (before > 0 && after > 0) ? "reset is harmless" :
+             "LE did not answer even before the reset");
+      close(fd);
+      return 0;
+    }
+
+  if (argc > 1 && strcmp(argv[1], "HCIK") == 0)
+    {
+      /* Does an LE response need a later write to come out?
+       *
+       * HCIQ showed four LE reads "time out" and then a single 41-byte
+       * read carrying all four answers, in order, every status zero --
+       * so the controller answers them and something holds the answers
+       * back.  If the thing that releases them is the next command
+       * written, then a host that sends one command and waits, which is
+       * exactly what bt_hci_cmd_send_sync does, waits forever.
+       *
+       * Send one LE read, listen far longer than any plausible radio
+       * latency, then send an unrelated command and listen again.  Two
+       * answers arriving after the second write is the whole claim.
+       */
+
+      uint8_t le[4] = { 0x01, 0x03, 0x20, 0x00 };   /* LE_Read_Local_Features */
+      uint8_t ver[4] = { 0x01, 0x01, 0x10, 0x00 };  /* Read_Local_Version */
+      uint8_t evt[96];
+      int fd;
+      int waited;
+      int n;
+      int first;
+
+      fd = open("/dev/ttyHCI0", O_RDWR | O_NONBLOCK);
+      if (fd < 0)
+        {
+          printf("face: /dev/ttyHCI0 open failed: %d\n", errno);
+          return 1;
+        }
+
+      while (read(fd, evt, sizeof(evt)) > 0);       /* start from empty */
+
+      write(fd, le, sizeof(le));
+      first = 0;
+      for (waited = 0; waited < 8000; waited += 50)
+        {
+          n = read(fd, evt, sizeof(evt));
+          if (n > 0)
+            {
+              first += n;
+            }
+
+          usleep(50000);
+        }
+
+      printf("face: after LE write alone, 8s -> %d bytes\n", first);
+
+      write(fd, ver, sizeof(ver));
+      n = 0;
+      for (waited = 0; waited < 3000; waited += 50)
+        {
+          int k = read(fd, evt, sizeof(evt));
+          if (k > 0)
+            {
+              n += k;
+            }
+
+          usleep(50000);
+        }
+
+      printf("face: after a second write, 3s -> %d bytes\n", n);
+      printf("face: verdict: %s\n",
+             (first == 0 && n > 0) ? "responses need a later write" :
+             (first > 0) ? "no gating, LE answered on its own" :
+             "no answer either way");
+      close(fd);
+      return 0;
+    }
+
+  if (argc > 1 && strcmp(argv[1], "HCIQ") == 0)
+    {
+      /* Which HCI opcodes does this controller actually answer over the
+       * raw path?  The Zephyr host stalls on the first LE-group command
+       * it sends, with the transport ring empty and nothing dropped, so
+       * the question is about the controller and not about us.  These
+       * are all zero-parameter reads, safe to issue in any order, and
+       * deliberately spread across both groups: 1001/1005 are
+       * Informational, the 20xx block is LE.  A missing answer prints as
+       * a timeout rather than hanging the shell.
+       */
+
+      static const uint16_t probe[] =
+      {
+        0x1001,   /* Read_Local_Version_Information */
+        0x1005,   /* Read_Buffer_Size */
+        0x2002,   /* LE_Read_Buffer_Size */
+        0x2003,   /* LE_Read_Local_Supported_Features */
+        0x2007,   /* LE_Read_Advertising_Channel_Tx_Power */
+        0x200f,   /* LE_Read_White_List_Size */
+        0x201c,   /* LE_Read_Supported_States */
+      };
+
+      uint8_t cmd[4];
+      uint8_t evt[64];
+      int fd;
+      int i;
+
+      fd = open("/dev/ttyHCI0", O_RDWR | O_NONBLOCK);
+      if (fd < 0)
+        {
+          printf("face: /dev/ttyHCI0 open failed: %d\n", errno);
+          return 1;
+        }
+
+      for (i = 0; i < (int)(sizeof(probe) / sizeof(probe[0])); i++)
+        {
+          int waited;
+          int n = -1;
+
+          cmd[0] = 0x01;
+          cmd[1] = (uint8_t)(probe[i] & 0xff);
+          cmd[2] = (uint8_t)(probe[i] >> 8);
+          cmd[3] = 0x00;
+
+          if (write(fd, cmd, sizeof(cmd)) != (int)sizeof(cmd))
+            {
+              printf("face: %04x write refused (%d)\n", probe[i], errno);
+              continue;
+            }
+
+          for (waited = 0; waited < 2000; waited += 20)
+            {
+              n = read(fd, evt, sizeof(evt));
+              if (n > 0)
+                {
+                  break;
+                }
+
+              usleep(20000);
+            }
+
+          if (n > 0)
+            {
+              printf("face: %04x -> evt %02x, %d bytes, status %02x\n",
+                     probe[i], evt[1], n, n >= 7 ? evt[6] : 0xff);
+            }
+          else
+            {
+              printf("face: %04x -> NO ANSWER\n", probe[i]);
+            }
+        }
+
+      close(fd);
+      return 0;
+    }
+
+  if (argc > 1 && strcmp(argv[1], "HCI") == 0)
+    {
+      /* End-to-end proof of the /dev/ttyHCI0 transport: an H4-framed
+       * HCI_Reset in, a Command Complete out.  Exercises the same path
+       * the openvela bluetooth service uses, without any of it.
+       * The controller must already be up (face BT 4).
+       */
+
+      static const uint8_t reset[4] = { 0x01, 0x03, 0x0c, 0x00 };
+      uint8_t evt[32];
+      char hex[3 * 16 + 1];
+      int fd;
+      int n;
+      int i;
+
+      fd = open("/dev/ttyHCI0", O_RDWR);
+      if (fd < 0)
+        {
+          printf("face: /dev/ttyHCI0 open failed: %d\n", errno);
+          return 1;
+        }
+
+      n = write(fd, reset, sizeof(reset));
+      printf("face: hci write -> %d\n", n);
+      if (n != (int)sizeof(reset))
+        {
+          close(fd);
+          return 1;
+        }
+
+      n = read(fd, evt, sizeof(evt));
+      close(fd);
+
+      if (n <= 0)
+        {
+          printf("face: hci read -> %d (no event)\n", n);
+          return 1;
+        }
+
+      for (i = 0; i < n && i < 16; i++)
+        {
+          snprintf(hex + i * 3, 4, "%02x ", evt[i]);
+        }
+
+      hex[(n < 16 ? n : 16) * 3] = '\0';
+      printf("face: hci evt %d bytes [%s]\n", n, hex);
+
+      /* 04 0e 04 xx 03 0c 00 = Command Complete, HCI_Reset, success */
+
+      printf("face: transport %s\n",
+             (n >= 7 && evt[0] == 0x04 && evt[1] == 0x0e &&
+              evt[4] == 0x03 && evt[5] == 0x0c && evt[6] == 0x00) ?
+             "WORKS" : "unexpected frame");
+      return 0;
+    }
+
   if (argc > 1 && strcmp(argv[1], "BT") == 0)
     {
       /* Staged BLE bring-up: face BT [stage], default 1.
@@ -784,6 +1357,20 @@ int main(int argc, char *argv[])
 
           printf("face: bt pll -> %d\n", bk7258_ble_use_bt_pll());
         }
+
+      if (stage == 7)
+        {
+          extern int bk7258_bt_cal_init(void);
+
+          printf("face: RF calibration starting before controller...\n");
+          ret = bk7258_bt_cal_init();
+          printf("face: RF calibration -> %d\n", ret);
+          if (ret < 0)
+            {
+              return 1;
+            }
+        }
+
       if (stage < 4)
         {
           return 0;
@@ -830,6 +1417,14 @@ bt_staged:
               return g_bt_ctrl_ret == 0 ? 0 : 1;
             }
 
+          if (stage >= 15)
+            {
+              extern void bk7258_bt_rf_diag(void);
+
+              bk7258_bt_rf_diag();
+              return 0;
+            }
+
           if (stage >= 14)
             {
               extern int bk7258_ble_tx_test(int channel, int seconds);
@@ -856,10 +1451,7 @@ bt_staged:
 
           if (stage >= 7)
             {
-              extern int bk7258_bt_cal_init(void);
-
-              printf("face: calibrating (known to fault today)...\n");
-              printf("face: cal -> %d\n", bk7258_bt_cal_init());
+              printf("face: RF calibration completed before controller\n");
               return 0;
             }
 
@@ -890,10 +1482,10 @@ bt_staged:
 
               bk7258_bt_rf_diag();
               bk7258_ble_txpwr(argc > 3 ? atoi(argv[3]) : -1);
-              int aret = bk7258_ble_adv_start("openvela-EPG");
+              int aret = bk7258_ble_adv_start("EPG-252-2026");
 
               printf("face: advertising -> %d (%s)\n", aret,
-                     aret == 0 ? "ON AIR as openvela-EPG" : "failed");
+                     aret == 0 ? "ON AIR as EPG-252-2026" : "failed");
               return aret == 0 ? 0 : 1;
             }
         }

@@ -31,6 +31,12 @@ CHIP_CSRCS += bk7258_allocateheap.c bk7258_gpio.c bk7258_clockconfig.c
 CHIP_CSRCS += bk7258_timerisr.c
 CHIP_CSRCS += bk7258_idle.c
 CHIP_CSRCS += bk7258_wdt.c
+ifeq ($(CONFIG_BK7258_RTC),y)
+CHIP_CSRCS += bk7258_rtc.c
+endif
+ifeq ($(CONFIG_BK7258_WDT),y)
+CHIP_CSRCS += bk7258_wdt_lowerhalf.c
+endif
 ifeq ($(CONFIG_BK7258_I2C1),y)
 CHIP_CSRCS += bk7258_i2c.c
 endif

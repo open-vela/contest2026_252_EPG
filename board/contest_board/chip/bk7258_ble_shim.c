@@ -23,13 +23,69 @@
 
 /* Beken semantics: disable returns the saved state, enable restores it. */
 
+/****************************************************************************
+ * Critical-section trace
+ *
+ * Temporary, for the rxsens hang: the board goes silent after
+ * "[RS]reset_mm" with the console and the scheduler both dead, which is
+ * what a spin with interrupts masked looks like.  This says whether the
+ * disable/enable calls balance, and where the last unmatched one came from.
+ *
+ * Output goes through up_putc(), not syslog().  syslog needs the character
+ * driver and therefore interrupts; up_putc is the OS's polled low-level
+ * path and is the only thing that still works inside the section being
+ * investigated.
+ *
+ * Armed by bk7258_int_trace(true) from the rxsens command, so boot does not
+ * spend the budget.
+ ****************************************************************************/
+
+static int  g_bk_int_depth;
+static int  g_bk_int_budget;
+
+static void bk_trace_word(char tag, uintptr_t v)
+{
+  static const char hex[] = "0123456789abcdef";
+  int i;
+
+  up_putc(tag);
+  for (i = 28; i >= 0; i -= 4)
+    {
+      up_putc(hex[(v >> i) & 0xf]);
+    }
+
+  up_putc('\r');
+  up_putc('\n');
+}
+
+void bk7258_int_trace(bool on)
+{
+  g_bk_int_budget = on ? 120 : 0;
+  g_bk_int_depth  = 0;
+}
+
 uint32_t rtos_disable_int(void)
 {
+  if (g_bk_int_budget > 0)
+    {
+      g_bk_int_budget--;
+      g_bk_int_depth++;
+      bk_trace_word('D', (uintptr_t)__builtin_return_address(0));
+      bk_trace_word('d', (uintptr_t)g_bk_int_depth);
+    }
+
   return (uint32_t)up_irq_save();
 }
 
 void rtos_enable_int(uint32_t flags)
 {
+  if (g_bk_int_budget > 0)
+    {
+      g_bk_int_budget--;
+      g_bk_int_depth--;
+      bk_trace_word('E', (uintptr_t)__builtin_return_address(0));
+    }
+
   up_irq_restore((irqstate_t)flags);
 }
 
@@ -59,6 +115,23 @@ int rtos_lock_mutex(void **mutex)
 int rtos_unlock_mutex(void **mutex)
 {
   return nxmutex_unlock((mutex_t *)*mutex);
+}
+
+/* Only the WiFi stack tears mutexes down; BLE holds its own for the life of
+ * the image.  It belongs here anyway, next to the allocation it undoes.
+ */
+
+int rtos_deinit_mutex(void **mutex)
+{
+  if (mutex == NULL || *mutex == NULL)
+    {
+      return -1;
+    }
+
+  nxmutex_destroy((mutex_t *)*mutex);
+  kmm_free(*mutex);
+  *mutex = NULL;
+  return 0;
 }
 
 void delay_us(uint32_t us)

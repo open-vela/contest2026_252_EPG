@@ -29,8 +29,10 @@
 #include <nuttx/arch.h>
 #include <nuttx/board.h>
 
+#include "bk7258_rtc.h"
 #include "bk7258_wdt.h"
 #include "bk7258_gpio.h"
+#include "bk7258_reset_reason.h"
 
 #include <nuttx/kmalloc.h>
 #include <syslog.h>
@@ -86,11 +88,13 @@ void board_late_initialize(void)
   bk7258_gpio_write(52, true);
 
 #if CONFIG_MM_REGIONS > 1
-  /* Fold the upper SRAM banks into the heap.  The linked region stops at
-   * 0x28040000 because early boot cannot keep .data/.bss any higher
+  /* Fold the upper SRAM banks into the heap.  The linked region stops well
+   * short of them because early boot cannot keep .data/.bss any higher
    * (measured; see the link script), but at runtime SRAM4/5 have carried
-   * stacks and test patterns through every probe.  0x28040000-0x28050000
-   * stays out: the black-box recorder lives at 0x28048000.
+   * stacks and test patterns through every probe.  This region starts at
+   * _ebbnote rather than at the end of the linked region: the 128 bytes
+   * between them are the serial black box, which has to stay out of every
+   * heap.
    */
 
   /* Top 32 KB (0x28098000+) stays out of the heap: the camera's YUV
@@ -98,7 +102,12 @@ void board_late_initialize(void)
    * (TJpgDec, copied below) at 0x2809d000.
    */
 
-  kumm_addregion((void *)0x28050000, 0x28098000 - 0x28050000);
+    {
+      extern uint32_t _ebbnote[];
+
+      kumm_addregion((void *)_ebbnote,
+                     0x28098000 - (uintptr_t)_ebbnote);
+    }
 
     {
       extern uint8_t _ssramfunc[];
@@ -139,6 +148,48 @@ void board_late_initialize(void)
 
   bk7258_serial_monitor_start();
 
+  /* Latch why this boot happened before anything else can disturb the
+   * always-on field.  Same domain-readiness argument as the RTC below: not
+   * from __start(), but safe by the time the console and watchdog are up.
+   */
+
+  bk7258_reset_cause_latch();
+
+  /* The NMI watchdog stage.  Same domain-readiness argument as the latch
+   * above and the RTC below: the peripheral block at 0x44800000 must not be
+   * addressed before its clock is running, and by here it is.
+   */
+
+  bk7258_wdt_nmi_initialize();
+
+#ifdef CONFIG_BK7258_RTC
+  /* The AON RTC is brought up here, not in up_rtc_initialize().  It needs a
+   * running system tick to measure its own clock rate against, and the AON
+   * domain must not be poked before it is ready -- the watchdog bricked the
+   * board twice from the top of __start() proving that.  By this point the
+   * console is up and the watchdog has been arming from the same domain for
+   * a while, so the domain is known good.  CONFIG_RTC_EXTERNAL is what lets
+   * the OS wait this long for its clock.
+   */
+
+    {
+      int ret = bk7258_rtc_initialize();
+
+      if (ret < 0)
+        {
+          syslog(LOG_WARNING, "rtc: not available: %d\n", ret);
+        }
+      else
+        {
+          ret = bk7258_rtc_register();
+          if (ret < 0)
+            {
+              syslog(LOG_WARNING, "rtc: not registered: %d\n", ret);
+            }
+        }
+    }
+#endif
+
     {
       /* Force the BLE staging object (and with it the closed-library
        * dependency tree) out of libarch.a and into the image.  Needs
@@ -176,6 +227,14 @@ void board_late_initialize(void)
 int board_reset(int status)
 {
   UNUSED(status);
+
+  /* Say it was us, so the next boot does not report this as a spontaneous
+   * watchdog bite.  Must precede the reset -- the always-on field is what
+   * carries the answer across.
+   */
+
+  bk7258_reset_reason_set(BK7258_RESET_REBOOT);
+
   bk7258_wdt_reboot();
   return 0;
 }

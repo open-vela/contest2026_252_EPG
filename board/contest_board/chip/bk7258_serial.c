@@ -34,6 +34,8 @@
 #include <nuttx/arch.h>
 #include <nuttx/irq.h>
 #include <nuttx/fs/ioctl.h>
+#include <termios.h>
+
 #include <nuttx/serial/serial.h>
 #include <nuttx/kthread.h>
 #include <nuttx/signal.h>
@@ -266,13 +268,20 @@ static inline void bk7258_serialout(struct bk7258_dev_s *priv,
  *
  * The wedge this port is chasing dies inside this interrupt handler with
  * interrupts masked and nothing dispatched, so nothing can report from the
- * inside.  These notes go to a fixed address in SRAM3 -- outside everything
- * this image links or heaps -- and survive the watchdog reset that follows;
- * __start() prints them on the way back up.  Tags: 0x11 handler entry with
- * int_status, 0x22 rx budget chosen, 0x33 handler exit with round count.
+ * inside.  These notes go just above the linked SRAM region -- outside
+ * everything this image links or heaps -- and survive the watchdog reset
+ * that follows; __start() prints them on the way back up.  Tags: 0x11
+ * handler entry with int_status, 0x22 rx budget chosen, 0x33 handler exit
+ * with round count.
+ *
+ * The address comes from the link script (_bbnote), not from a constant: a
+ * constant picked to clear the region once stopped clearing it when
+ * LENGTH(sram) grew, and the notes landed in live heap.
  */
 
-#define BB_BASE  ((volatile uint32_t *)0x28048000)
+extern uint32_t _bbnote[];
+
+#define BB_BASE  ((volatile uint32_t *)_bbnote)
 
 static inline void bb_note(uint32_t word)
 {
@@ -766,6 +775,24 @@ void arm_serialinit(void)
 {
 #ifdef CONSOLE_DEV
   uart_register("/dev/console", &CONSOLE_DEV);
+
+#ifdef CONFIG_TTY_SIGINT
+  /* Turn on ISIG for the console, which is what gates the Ctrl-C path:
+   * uart_recvchars() -> uart_check_special() returns immediately unless this
+   * bit is set, so without it the interrupt character is just another byte
+   * in the receive buffer and no runaway task can ever be stopped.
+   *
+   * uart_register() would normally do this itself, but only for a device
+   * whose isconsole flag is set at registration time, and it sets ECHO and
+   * ICANON in the same breath.  This port never reaches that path -- its
+   * early console comes up through bk7258_lowputc() rather than
+   * arm_earlyserialinit(), which nothing calls -- and enabling driver-side
+   * echo and canonical mode underneath NSH's own line editing would be a
+   * behaviour change nobody asked for.  So set the one bit that matters.
+   */
+
+  CONSOLE_DEV.tc_lflag |= ISIG;
+#endif
 #endif
 #ifdef TTYS0_DEV
   uart_register("/dev/ttyS0", &TTYS0_DEV);

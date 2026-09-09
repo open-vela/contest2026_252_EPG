@@ -419,3 +419,79 @@ const TMP_PWR_ST tmp_pwr_tab[TMP_PWR_TAB_LEN] = {
     {  0x00,        6,      17,       17,      196},   // 37    ,145
     {  0x00,        6,      17,       17,      255},   // 38    ,150
 };
+
+/****************************************************************************
+ * TX power shift tables
+ *
+ * Verbatim from middleware/boards/bk7258/vnd_cal/vnd_cal.c.  They were left
+ * out when this file was first ported because the BLE path never reads
+ * them; the closed PHY calibration in libbk_phy.a does, from
+ * manual_cal_get_pwr_idx_shift() and its FCC/SRRC variants, so WiFi cannot
+ * link without them.
+ *
+ * The vendor guards the first three with CFG_SUPPORT_LOW_MAX_CURRENT, a
+ * reduced-power variant for boards limited to 250 mA at 3.3 V.  This build
+ * does not define it, so these are the values from the #else branch -- note
+ * that the low-current branch has no n20/n40 tables at all, which is how
+ * you can tell which one a link error is asking for.
+ *
+ * These are per-rate and per-channel offsets in 0.25 dB steps, not
+ * calibration data: the factory numbers live in the rf_firmware flash
+ * partition and are read at runtime.  Editing them changes transmit power
+ * and therefore regulatory compliance.
+ ****************************************************************************/
+
+#define BK7258_WLAN_2_4_G_CHANNEL_NUM  14
+
+/* Rate shift, relative to the base rate of each modulation. */
+
+const int16_t shift_tab_b[4] = {0, 0, 0, 0};        /* 11M base, 5.5M, 2M, 1M */
+
+/*                             54M base, 48M, 36M, 24M, 18M, 12M, 9M, 6M */
+const int16_t shift_tab_g[8] = {0,   2,   2,   2,   3,   3,   4,  4};
+
+/*                               mcs9 mcs8 mcs7(base) .. mcs0 */
+const int16_t shift_tab_n20[10] = {-10, -6, 0, 2, 2, 2, 3, 3, 4, 4};
+const int16_t shift_tab_n40[10] = {-10, -6, 0, 0, 0, 0, 0, 0, 0, 0};
+
+/* Per-channel shift, ch1..ch14, one table per regulatory domain. */
+
+const int16_t shift_tab_b_fcc[BK7258_WLAN_2_4_G_CHANNEL_NUM] =
+{
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+};
+
+const int16_t shift_tab_g_fcc[BK7258_WLAN_2_4_G_CHANNEL_NUM] =
+{
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+};
+
+const int16_t shift_tab_n20_fcc[BK7258_WLAN_2_4_G_CHANNEL_NUM] =
+{
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+};
+
+const int16_t shift_tab_n40_fcc[BK7258_WLAN_2_4_G_CHANNEL_NUM] =
+{
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+};
+
+const int16_t shift_tab_b_srrc[BK7258_WLAN_2_4_G_CHANNEL_NUM] =
+{
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -10, -12, 0
+};
+
+const int16_t shift_tab_g_srrc[BK7258_WLAN_2_4_G_CHANNEL_NUM] =
+{
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -12, -32, 0
+};
+
+const int16_t shift_tab_n20_srrc[BK7258_WLAN_2_4_G_CHANNEL_NUM] =
+{
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -12, -32, 0
+};
+
+const int16_t shift_tab_n40_srrc[BK7258_WLAN_2_4_G_CHANNEL_NUM] =
+{
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -12, -32, 0
+};

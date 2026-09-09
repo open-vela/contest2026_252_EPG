@@ -1,0 +1,52 @@
+#
+# For a description of the syntax of this configuration file,
+# see the file kconfig-language.txt in the NuttX tools repository.
+#
+# cmocka self-test suite for the Agora ConvoAI Kit R1 (Beken BK7258).
+#
+
+config TESTING_BK7258
+	tristate "cmocka BK7258 board self test"
+	default n
+	depends on TESTING_CMOCKA
+	---help---
+		Board self test for the BK7258 chip layer: the audio DAC/ADC, the
+		general SARADC, the vibration motor PWM, the pin multiplexer, the
+		hardware JPEG decoder with the DMA2D splitter, and the BLE
+		controller bring-up.  Every case asserts against hardware state,
+		so this needs the real board -- it is not a build-time check.
+
+if TESTING_BK7258
+
+config TESTING_BK7258_PROGNAME
+	string "Program name"
+	default "cmocka_bk7258_test"
+	---help---
+		This is the name of the cmocka program that runs the BK7258 board
+		self test.  The cmocka runner selects suites by program name and
+		expects the "cmocka_" prefix.
+
+config TESTING_BK7258_PRIORITY
+	int "Task priority"
+	default 100
+
+config TESTING_BK7258_STACKSIZE
+	int "Stack size"
+	default 8192
+	---help---
+		Larger than the usual default: the video cases carry the frame
+		geometry on the stack alongside cmocka's own setjmp state, and the
+		BLE bring-up runs beneath the case that reports it.
+
+config TESTING_BK7258_VIDEO
+	bool "Include the JPEG decoder and DMA2D cases"
+	default y
+	depends on CONTEST_FACE
+	---help---
+		The hardware JPEG decoder and the DMA2D splitter are only built
+		into the image when the face application asks for them, so their
+		cases follow the same condition.  Turning this off drops two
+		cases; leaving it on with the face application disabled would not
+		link.
+
+endif

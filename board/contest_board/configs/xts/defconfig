@@ -1,0 +1,355 @@
+#
+# xTS verification image for the Agora ConvoAI Kit R1 (Beken BK7258), CPU0.
+#
+# Console is UART0 on GPIO10/GPIO11, which reaches the host through the
+# on-board CH340 USB-serial bridge.
+#
+# This is configs/nsh with the whole mandatory self-test set switched on and
+# the product features that will not fit alongside it switched off: the
+# closed BLE stack and its dependencies (unqlite, libuv, mbedtls) and the
+# three demo applications (eyes, face, snap).  The app partition is 1728 KB
+# and configs/nsh already occupies 93% of it, so the two cannot coexist.
+#
+# Run the mandatory cases against this image, then flash configs/nsh back.
+# That order is what the openvela porting guide describes -- self-test is a
+# verification build, not the shipping one.
+#
+# Build:
+#   ./build.sh vendor/openvela/boards/contest2026_252_board/configs/xts \
+#       --cmake -j8
+#
+# Note that adding a CONFIG here requires deleting cmake_out/<board>_xts
+# first; see the discipline note in the repository CLAUDE.md.
+#
+CONFIG_ARCH="arm"
+CONFIG_ARCH_BOARD_CUSTOM=y
+CONFIG_ARCH_BOARD_CUSTOM_DIR="../vendor/openvela/boards/contest2026_252_board"
+CONFIG_ARCH_BOARD_CUSTOM_DIR_RELPATH=y
+CONFIG_ARCH_BOARD_CUSTOM_NAME="nsh"
+CONFIG_ARCH_CHIP_ARM_CUSTOM=y
+CONFIG_ARCH_CHIP_BK7258=y
+CONFIG_ARCH_CHIP_CUSTOM=y
+CONFIG_ARCH_CHIP_CUSTOM_DIR="../vendor/openvela/boards/contest2026_252_board/chip"
+CONFIG_ARCH_CHIP_CUSTOM_DIR_RELPATH=y
+CONFIG_ARCH_CHIP_CUSTOM_NAME="bk7258"
+CONFIG_ARCH_IDLE_CUSTOM=y
+CONFIG_ARCH_INTERRUPTSTACK=8192
+CONFIG_ARCH_IRQPRIO=y
+CONFIG_ARCH_MINIMAL_VECTORTABLE=y
+CONFIG_ARCH_MINIMAL_VECTORTABLE_DYNAMIC=y
+CONFIG_ARCH_NUSER_INTERRUPTS=24
+CONFIG_ARCH_STACKDUMP=y
+CONFIG_BK7258_EARLY_MARKERS=y
+# CONFIG_BK7258_LED_PROBE is not set
+# CONFIG_BK7258_TXPIN_PROBE is not set
+# CONFIG_BK7258_TXPIN_PROBE_LATE is not set
+# CONFIG_BK7258_TXPIN_TRACE is not set
+# CONFIG_BK7258_UART_DUMP is not set
+CONFIG_BK7258_UART0=y
+CONFIG_BOARDCTL=y
+CONFIG_BOARDCTL_RESET=y
+CONFIG_BOARD_EARLY_INITIALIZE=y
+CONFIG_BOARD_LATE_INITIALIZE=y
+CONFIG_BOARD_LOOPSPERMSEC=24000
+CONFIG_BUILTIN=y
+CONFIG_DEBUG_ASSERTIONS=y
+CONFIG_DEBUG_HARDFAULT_ALERT=y
+CONFIG_DEBUG_ERROR=y
+CONFIG_DEBUG_FEATURES=y
+CONFIG_DEBUG_SYMBOLS=y
+CONFIG_DEBUG_WARN=y
+CONFIG_DEFAULT_TASK_STACKSIZE=16384
+CONFIG_DEV_CONSOLE=y
+CONFIG_DEV_NULL=y
+CONFIG_DEV_ZERO=y
+CONFIG_FS_PROCFS=y
+CONFIG_IDLETHREAD_STACKSIZE=16384
+CONFIG_INIT_ENTRYPOINT="nsh_main"
+CONFIG_INIT_STACKSIZE=4096
+CONFIG_LIBC_PERROR_STDOUT=y
+CONFIG_LIBC_STRERROR=y
+CONFIG_MAX_TASKS=16
+# NuttX defaults NAME_MAX to 32, which is shorter than the filenames the xTS
+# syscall cases build from their own function names -- e.g.
+# "test_nuttx_syscall_write03_file.wav" is 35.  open() then fails and the
+# case reports "fd > 0" or "open test file fail", which reads like a
+# filesystem fault and is really a name-length limit.  Four cases in 1.1.3
+# were failing on nothing else; the passing ones are all <= 32.  Other boards
+# in this tree use 48-96.
+CONFIG_NAME_MAX=64
+CONFIG_NSH_ARCHINIT=y
+CONFIG_NSH_BUILTIN_APPS=y
+CONFIG_NSH_FILEIOSIZE=512
+CONFIG_NSH_LINELEN=256
+CONFIG_NSH_READLINE=y
+CONFIG_PREALLOC_TIMERS=4
+CONFIG_RAM_SIZE=655360
+CONFIG_RAM_START=0x28000000
+CONFIG_RAW_BINARY=y
+CONFIG_RR_INTERVAL=200
+CONFIG_SCHED_WAITPID=y
+CONFIG_STACK_COLORATION=y
+CONFIG_START_DAY=1
+CONFIG_START_MONTH=1
+CONFIG_START_YEAR=2026
+CONFIG_SYSTEM_NSH=y
+CONFIG_TASK_NAME_SIZE=16
+CONFIG_UART0_BAUD=115200
+CONFIG_UART0_RXBUFSIZE=256
+CONFIG_UART0_SERIAL_CONSOLE=y
+CONFIG_UART0_TXBUFSIZE=256
+CONFIG_USEC_PER_TICK=10000
+# CONFIG_ARCH_LEDS is not set
+CONFIG_USERLED=y
+CONFIG_USERLED_LOWER=y
+CONFIG_ARCH_BUTTONS=y
+CONFIG_ARCH_IRQBUTTONS=y
+CONFIG_INPUT=y
+CONFIG_INPUT_BUTTONS=y
+CONFIG_INPUT_BUTTONS_LOWER=y
+CONFIG_DEV_GPIO=y
+CONFIG_EXAMPLES_LEDS=y
+CONFIG_EXAMPLES_BUTTONS=y
+CONFIG_EXAMPLES_GPIO=y
+CONFIG_BK7258_RTC=y
+CONFIG_RTC=y
+CONFIG_RTC_ARCH=y
+CONFIG_RTC_DRIVER=y
+CONFIG_RTC_EXTERNAL=y
+CONFIG_BK7258_WDT=y
+CONFIG_WATCHDOG=y
+CONFIG_EXAMPLES_WATCHDOG=y
+CONFIG_BK7258_WIFI=y
+CONFIG_BK7258_WIFI_ATE=y
+CONFIG_BK7258_WIFI_VENDOR=y
+CONFIG_BK7258_WIFI_WPA=y
+CONFIG_DRIVERS_IEEE80211=y
+CONFIG_NETDEVICES=y
+CONFIG_NETDEV_WIRELESS_HANDLER=y
+CONFIG_NETDEV_WIRELESS_IOCTL=y
+CONFIG_NETUTILS_DHCPC=y
+CONFIG_NET_ICMP_SOCKET=y
+CONFIG_SYSTEM_PING=y
+CONFIG_NETDEV_IOCTL=y
+CONFIG_NET_ETHERNET=y
+CONFIG_WIRELESS=y
+CONFIG_DRIVERS_WIRELESS=y
+CONFIG_WIRELESS_WAPI=y
+CONFIG_WIRELESS_WAPI_CMDTOOL=y
+CONFIG_BK7258_FLASH=y
+CONFIG_MTD=y
+CONFIG_MTD_PARTITION=y
+CONFIG_BK7258_TIMER=y
+CONFIG_BK7258_I2C1=y
+CONFIG_I2C=y
+CONFIG_I2C_DRIVER=y
+CONFIG_SYSTEM_I2CTOOL=y
+CONFIG_I2C_BITBANG=y
+CONFIG_BK7258_SPI1=y
+CONFIG_SPI=y
+CONFIG_LCD=y
+CONFIG_LCD_FRAMEBUFFER=y
+CONFIG_VIDEO_FB=y
+CONFIG_EXAMPLES_FB=y
+CONFIG_MM_REGIONS=3
+CONFIG_SCHED_BACKTRACE=y
+CONFIG_SYSTEM_DUMPSTACK=y
+CONFIG_SCHED_HPWORK=y
+CONFIG_MMCSD=y
+CONFIG_MMCSD_SDIO=y
+CONFIG_SDIO_BLOCKSETUP=y
+CONFIG_MMCSD_MULTIBLOCK_LIMIT=1
+CONFIG_FS_FAT=y
+CONFIG_FSUTILS_MKFATFS=y
+CONFIG_DRIVERS_VIDEO=y
+
+#
+# cmocka board self test ("cmocka_bk7258_test" from NSH).
+#
+# TESTING_CMOCKA wants LIBC_REGEX, which is MIT-licensed and therefore
+# gated behind ALLOW_MIT_COMPONENTS, and LIBC_EXECFUNCS, which the cmocka
+# runner uses to spawn the individual suites.
+#
+# ARCH_SETJMP_H is the one that is not obvious.  cmocka reports a failed
+# assertion by longjmp'ing out of the case, and this image links with
+# -nostdlib against libgcc and libm only, so the toolchain's setjmp never
+# arrives.  ARCH_SETJMP_H builds NuttX's own ARM setjmp/longjmp and
+# redirects <setjmp.h> at it.  Nothing else in this image uses setjmp, so
+# the redirected jmp_buf affects only cmocka.
+#
+CONFIG_ARCH_SETJMP_H=y
+CONFIG_ALLOW_MIT_COMPONENTS=y
+CONFIG_LIBC_REGEX=y
+CONFIG_LIBC_EXECFUNCS=y
+CONFIG_TESTING_CMOCKA=y
+CONFIG_TESTING_BK7258=y
+CONFIG_SCHED_HAVE_PARENT=y
+CONFIG_SCHED_LPWORK=y
+CONFIG_PIPES=y
+CONFIG_LIBC_FLOATINGPOINT=y
+CONFIG_TESTS_TESTSUITES=y
+CONFIG_TESTS_TESTSUITES_STACKSIZE=16384
+CONFIG_CM_MM_TEST=y
+CONFIG_CM_SCHED_TEST=y
+CONFIG_CM_SYSCALL_TEST=y
+CONFIG_TESTING_OSTEST=y
+CONFIG_TESTING_GETPRIME=y
+CONFIG_TESTING_MM=y
+CONFIG_TESTING_SCANFTEST=y
+CONFIG_EXAMPLES_HELLO=y
+CONFIG_EXAMPLES_PIPE=y
+CONFIG_EXAMPLES_POPEN=y
+CONFIG_SYSTEM_POPEN=y
+CONFIG_TESTING_DRIVER_TEST=y
+CONFIG_TESTING_DRIVER_TEST_STACKSIZE=8192
+CONFIG_FS_TMPFS=y
+CONFIG_FS_LINKS=y
+CONFIG_LIBC_SCANSET=y
+CONFIG_LIBC_LONG_LONG=y
+CONFIG_TESTS_TESTSUITES_MOUNT_DIR="/tmp"
+CONFIG_RTC_ALARM=y
+CONFIG_RTC_PERIODIC=y
+CONFIG_RTC_IOCTL=y
+CONFIG_RTC_DATETIME=y
+CONFIG_SIG_EVTHREAD=y
+CONFIG_ONESHOT=y
+CONFIG_ALARM_ARCH=y
+CONFIG_ONESHOT_COUNT=y
+CONFIG_PTHREAD_MUTEX_TYPES=y
+CONFIG_NET=y
+CONFIG_NET_LOCAL=y
+CONFIG_NET_LOCAL_STREAM=y
+CONFIG_NETDEV_LATEINIT=y
+
+# The rest of the network prerequisites the xTS document lists for 1.1.3
+# (openvela_xts_test_cases.md, "前提条件" above the syscall suite).  Four of
+# the syscall cases open real sockets rather than the local-domain ones, and
+# without a transport they fail at socket() -- which reads like a broken
+# system call and is really a missing protocol.  None of this needs a radio:
+# the cases exercise the socket API, not a link.
+CONFIG_NET_IPv4=y
+CONFIG_NET_ICMP=y
+CONFIG_NET_SOCKOPTS=y
+CONFIG_NET_TCP=y
+CONFIG_NET_UDP=y
+CONFIG_IOB_NBUFFERS=128
+CONFIG_IOB_NCHAINS=4
+
+# The document also lists FAT_LFN and PSEUDOFS_SOFTLINKS.  The latter is
+# FS_LINKS in this tree and is already on, above.
+CONFIG_FAT_LFN=y
+CONFIG_DEV_URANDOM=y
+CONFIG_DEV_URANDOM_XORSHIFT128=y
+CONFIG_SYSTEM_WORKQUEUE_STACK_SIZE=32768
+CONFIG_SYSTEM_WORKQUEUE_NO_YIELD=y
+
+#
+# Coverage for the xTS "general self-test" set, which the openvela porting
+# guide (docs/zh-cn/chip_porting/porting_guide.md, section 5) lists as
+# mandatory for a new platform.  Case numbers below refer to
+# docs/zh-cn/test_dev_guide/openvela_xts_test_cases.md.
+#
+# A warning that cost a day once: a symbol written here that no Kconfig in
+# this tree defines, or whose dependencies are unmet, is dropped in silence
+# -- the defconfig keeps the line and .config never gets it.  Every symbol
+# below was checked against nuttx/ and apps/ before being added.  The xTS
+# document names several symbols this tree does not have (CONFIG_CMOCKA is
+# TESTING_CMOCKA here, PSEUDOFS_SOFTLINKS is FS_LINKS, TESTS_TESTCASES and
+# FS_TEST do not exist at all); those are handled by the in-tree equivalent
+# rather than by copying the name across.
+#
+
+# The /etc ROMFS.  Required by the porting guide's board-layer checklist
+# (section 3.2, ETCROMFS) and read by case 1.1.12.  src/CMakeLists.txt bakes
+# src/etc into the image; sched/init/nx_bringup.c mounts it before init runs.
+CONFIG_FS_ROMFS=y
+CONFIG_ETC_ROMFS=y
+
+# 1.1.12 Kernel-md5.  The runner is board-supplied (src/md5_test.c) because
+# the document's CONFIG_TESTS_TESTCASES/FS_TEST do not exist here; CRYPTO is
+# what provides md5init/md5update/md5final.
+CONFIG_CRYPTO=y
+
+# 1.3.5 Flash/block device.  cmocka_driver_block reaches a block driver
+# through the block-to-character shim.
+CONFIG_BCH=y
+# 1.3.15 Watchdog.  The case reads the reset cause back after each bite and
+# expects BOARDIOC_RESETCAUSE_SYS_RWDT; src/bk7258_reset.c answers it out of
+# the always-on PMU retention field.
+CONFIG_BOARDCTL_RESET_CAUSE=y
+
+# The NMI watchdog stage.  Without it the reset-cause field only ever reads
+# back what software last wrote, so an unannounced bite reports SYS_CHIPPOR
+# and case 1.3.15 fails on that assertion (it did, four runs out of four).
+CONFIG_BK7258_WDT_NMI=y
+
+# Ctrl-C on the console.  Without these a runaway foreground task cannot be
+# interrupted at all, and since NSH does not echo while one is running, a
+# merely slow task is indistinguishable from a dead board -- which is exactly
+# how the block-stress "hang" got misdiagnosed (PORTING_NOTES ch.17).
+CONFIG_SIG_DEFAULT=y
+CONFIG_TTY_SIGINT=y
+
+#
+# The rest of the mandatory set, which is what this config exists for.
+#
+# 1.3.17 Crypto.  The cases open /dev/crypto, so cryptodev needs a software
+# cipher back end behind it -- this SoC's crypto accelerator is not driven.
+# 3DES_CBC/AES_CBC/AES_CTR/AES_XTS/HMAC default to y once TESTING_CRYPTO is
+# on; the three below default to n and the document asks for them.  (The
+# document's TESTING_CRYPTO_3DES_XTS does not exist; AES_XTS is the one this
+# tree has.)
+# CRYPTO_RANDOM_POOL is not optional here despite the name: cryptosoft.c's
+# Diffie-Hellman path references curve25519(), and nuttx/crypto/CMakeLists.txt
+# only compiles curve25519.c inside the CRYPTO_RANDOM_POOL branch.  Without
+# it the link fails on curve25519_generate_public.
+CONFIG_ALLOW_BSD_COMPONENTS=y
+CONFIG_CRYPTO_RANDOM_POOL=y
+CONFIG_CRYPTO_SW_AES=y
+CONFIG_CRYPTO_CRYPTODEV=y
+CONFIG_CRYPTO_CRYPTODEV_SOFTWARE_CRYPTO=y
+CONFIG_TESTING_CRYPTO=y
+CONFIG_TESTING_CRYPTO_HASH=y
+CONFIG_TESTING_CRYPTO_CRC32=y
+CONFIG_TESTING_CRYPTO_ECDSA=y
+
+#
+# 1.3.16 RNG (nist_sts), against /dev/urandom (DEV_URANDOM above).
+#
+# apps/ does not ship the suite; it downloads sts-2_1_2.zip from NIST at
+# configure time, and two things there do not line up -- the archive extracts
+# as "sts-2.1.2" while its CMakeLists globs "sts/src/*.c", and its
+# PATCH_COMMAND applies patches one directory level too deep.  Between them
+# no source is found, the build still succeeds, and only the link fails on an
+# unresolved nist_sts_main.  Run tools/fix_nist_sts.sh once before building
+# with this on; the fixup lives entirely inside a gitignored download
+# directory, so no tracked file in any public repository changes.
+#
+# The suite also keeps a stats.txt and a results.txt open for all 15 tests at
+# once, plus a summary and the input file -- past 30 descriptors.  Blocks of
+# 8 run out partway through and it reports that as "LOG FILES COULD NOT BE
+# OPENED", which reads like a missing directory but is not.
+#
+CONFIG_TESTING_NIST_STS=y
+CONFIG_NFILE_DESCRIPTORS_PER_BLOCK=64
+
+# 1.3.2 RAM read/write (fstest) and 1.3.3 RAM throughput (ramtest).  1.3.4
+# (random access) is already covered by cmocka_driver_block above.
+CONFIG_TESTING_FSTEST=y
+CONFIG_TESTING_RAMTEST=y
+
+# 1.1.9 / 1.1.13 C++.  HAVE_CXX only declares that the toolchain can compile
+# C++; the standard library is a separate choice and defaults to LIBCXXNONE,
+# which is why cxxtest first failed on a missing <map>.  cxxtest pulls in
+# <map>/<vector>/<fstream>/<iostream>, so it needs the full LLVM libc++ --
+# both it and libc++abi are vendored under nuttx/libs/libxx, so this builds
+# offline.  LIBCXX depends on TLS_NELEM > 0, which configs/nsh happens to
+# get from the Bluetooth block that this config drops, so it is set here
+# explicitly.
+CONFIG_HAVE_CXX=y
+CONFIG_TLS_NELEM=4
+CONFIG_TLS_TASK_NELEM=4
+CONFIG_LIBCXX=y
+CONFIG_LIBCXXABI=y
+CONFIG_EXAMPLES_HELLOXX=y
+CONFIG_TESTING_CXXTEST=y

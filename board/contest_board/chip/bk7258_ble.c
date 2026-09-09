@@ -8,6 +8,7 @@
  ****************************************************************************/
 
 #include <nuttx/config.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
 #include <unistd.h>
@@ -210,6 +211,19 @@ int bk7258_bt_cal_init(void)
   return bk_cal_if_init();
 }
 
+extern void ble_ps_enable_clear(void);
+
+/* Power save is switched off after controller init (see the call site).
+ * This flag exists so the same image can be measured both ways.
+ */
+
+static bool g_bt_ps_disable = true;
+
+void bk7258_bt_ps_keep(void)
+{
+  g_bt_ps_disable = false;
+}
+
 int bk7258_bt_controller_init(void)
 {
   /* Calibration goes after the controller here, not before it as the
@@ -236,6 +250,29 @@ int bk7258_bt_controller_init(void)
 
       syslog(LOG_INFO, "ble: calibration -> %d%s\n", cal,
              cal == 0 ? "" : " (no factory record; defaults in use)");
+
+      /* Leave controller power save off.
+       *
+       * The controller task runs "if (ble_ps_enabled()) rwip_sleep();"
+       * before every rwip_schedule(), and ble_ps_enable_set() turns that
+       * on at start of day -- it ignores its argument and stores 1.  In
+       * the vendor's own arrangement the UART that carries HCI wakes the
+       * part again; this port carries HCI over a function call, so
+       * nothing does, and a sleeping controller services commands only
+       * when a timer next wakes it.  Measured: with power save on,
+       * HCI_Reset took 2.35 s and each following command exactly 10.000
+       * s, so the Bluetooth service's adapter took 141 s to come up and
+       * its advertising start timed out.  With it off, every one of
+       * those commands completes in under 10 ms.
+       *
+       * The cost is idle current: the radio no longer sleeps between
+       * events.  bk7258_bt_ps_keep() leaves it on for measurement.
+       */
+
+      if (g_bt_ps_disable)
+        {
+          ble_ps_enable_clear();
+        }
     }
 
   return ret;
@@ -354,8 +391,6 @@ static int ble_hci_acl_cb(uint8_t *buf, uint16_t len)
   return 0;
 }
 
-static int hci_cmd(uint16_t opcode, const uint8_t *params, uint8_t plen);
-
 static int hci_register_once(void)
 {
   static int s_registered;
@@ -371,16 +406,8 @@ static int hci_register_once(void)
     }
 
   s_registered = 1;
-
   return 0;
 }
-
-/* LE_Set_Event_Mask is deliberately never sent.  This controller
- * delivers advertising reports on its power-on default and stops
- * delivering them after any 0x2001, including the Core spec's own
- * default value of 0x1f -- verified both ways on hardware.
- */
-
 
 static int hci_cmd(uint16_t opcode, const uint8_t *params, uint8_t plen)
 {
@@ -677,16 +704,6 @@ int bk7258_ble_adv_start(const char *name)
          hci_cmd(0x2006, adv_params, sizeof(adv_params)));
   syslog(LOG_INFO, "hci: adv_data -> %d\n",
          hci_cmd(0x2008, adv_data, 32));
-
-  /* Vote the radio open for bluetooth before keying the transmitter.
-   * The controller is supposed to do this itself through the OSI
-   * table; asking again is idempotent in the arbiter and costs one
-   * call, and the PHY's own "rf off" note during the synthesiser
-   * switch is reason enough not to assume it happened.
-   */
-
-  rf_module_vote_ctrl(1, 1u << 1);        /* RF_OPEN, RF_BY_BLE_BIT */
-  syslog(LOG_INFO, "ble: rf vote open issued\n");
 
   ret = hci_cmd(0x200a, &enable, 1);
   syslog(LOG_INFO, "hci: adv_enable -> %d\n", ret);

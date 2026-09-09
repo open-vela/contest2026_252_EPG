@@ -17,8 +17,11 @@ CONFIG_ARCH_CHIP_CUSTOM_DIR_RELPATH=y
 CONFIG_ARCH_CHIP_CUSTOM_NAME="bk7258"
 CONFIG_ARCH_IDLE_CUSTOM=y
 CONFIG_ARCH_INTERRUPTSTACK=8192
+CONFIG_ARCH_IRQPRIO=y
+CONFIG_ARCH_MINIMAL_VECTORTABLE=y
+CONFIG_ARCH_MINIMAL_VECTORTABLE_DYNAMIC=y
+CONFIG_ARCH_NUSER_INTERRUPTS=24
 CONFIG_ARCH_STACKDUMP=y
-CONFIG_ARMV8M_SYSTICK=y
 CONFIG_BK7258_EARLY_MARKERS=y
 # CONFIG_BK7258_LED_PROBE is not set
 # CONFIG_BK7258_TXPIN_PROBE is not set
@@ -43,12 +46,20 @@ CONFIG_DEV_CONSOLE=y
 CONFIG_DEV_NULL=y
 CONFIG_DEV_ZERO=y
 CONFIG_FS_PROCFS=y
-CONFIG_IDLETHREAD_STACKSIZE=74648
+CONFIG_IDLETHREAD_STACKSIZE=16384
 CONFIG_INIT_ENTRYPOINT="nsh_main"
 CONFIG_INIT_STACKSIZE=4096
 CONFIG_LIBC_PERROR_STDOUT=y
 CONFIG_LIBC_STRERROR=y
 CONFIG_MAX_TASKS=16
+# NuttX defaults NAME_MAX to 32, which is shorter than the filenames the xTS
+# syscall cases build from their own function names -- e.g.
+# "test_nuttx_syscall_write03_file.wav" is 35.  open() then fails and the
+# case reports "fd > 0" or "open test file fail", which reads like a
+# filesystem fault and is really a name-length limit.  Four cases in 1.1.3
+# were failing on nothing else; the passing ones are all <= 32.  Other boards
+# in this tree use 48-96.
+CONFIG_NAME_MAX=64
 CONFIG_NSH_ARCHINIT=y
 CONFIG_NSH_BUILTIN_APPS=y
 CONFIG_NSH_FILEIOSIZE=512
@@ -83,6 +94,17 @@ CONFIG_DEV_GPIO=y
 CONFIG_EXAMPLES_LEDS=y
 CONFIG_EXAMPLES_BUTTONS=y
 CONFIG_EXAMPLES_GPIO=y
+CONFIG_BK7258_RTC=y
+CONFIG_RTC=y
+CONFIG_RTC_ARCH=y
+CONFIG_RTC_DRIVER=y
+CONFIG_RTC_EXTERNAL=y
+CONFIG_BK7258_WDT=y
+CONFIG_WATCHDOG=y
+CONFIG_EXAMPLES_WATCHDOG=y
+CONFIG_BK7258_TIMER=y
+CONFIG_BK7258_BATTERY=y
+CONFIG_BK7258_HCI_TRANSPORT=y
 CONFIG_BK7258_I2C1=y
 CONFIG_I2C=y
 CONFIG_I2C_DRIVER=y
@@ -106,3 +128,179 @@ CONFIG_MMCSD_MULTIBLOCK_LIMIT=1
 CONFIG_FS_FAT=y
 CONFIG_FSUTILS_MKFATFS=y
 CONFIG_DRIVERS_VIDEO=y
+
+#
+# cmocka board self test ("cmocka_bk7258_test" from NSH).
+#
+# TESTING_CMOCKA wants LIBC_REGEX, which is MIT-licensed and therefore
+# gated behind ALLOW_MIT_COMPONENTS, and LIBC_EXECFUNCS, which the cmocka
+# runner uses to spawn the individual suites.
+#
+# ARCH_SETJMP_H is the one that is not obvious.  cmocka reports a failed
+# assertion by longjmp'ing out of the case, and this image links with
+# -nostdlib against libgcc and libm only, so the toolchain's setjmp never
+# arrives.  ARCH_SETJMP_H builds NuttX's own ARM setjmp/longjmp and
+# redirects <setjmp.h> at it.  Nothing else in this image uses setjmp, so
+# the redirected jmp_buf affects only cmocka.
+#
+CONFIG_ARCH_SETJMP_H=y
+CONFIG_ALLOW_MIT_COMPONENTS=y
+CONFIG_LIBC_REGEX=y
+CONFIG_LIBC_EXECFUNCS=y
+CONFIG_TESTING_CMOCKA=y
+CONFIG_TESTING_BK7258=y
+CONFIG_SCHED_HAVE_PARENT=y
+CONFIG_SCHED_LPWORK=y
+CONFIG_PIPES=y
+CONFIG_LIBC_FLOATINGPOINT=y
+CONFIG_TESTS_TESTSUITES=y
+CONFIG_TESTS_TESTSUITES_STACKSIZE=16384
+CONFIG_CM_MM_TEST=y
+CONFIG_CM_SCHED_TEST=y
+CONFIG_CM_SYSCALL_TEST=y
+CONFIG_TESTING_OSTEST=y
+CONFIG_TESTING_GETPRIME=y
+CONFIG_TESTING_MM=y
+CONFIG_TESTING_SCANFTEST=y
+CONFIG_EXAMPLES_HELLO=y
+CONFIG_EXAMPLES_PIPE=y
+CONFIG_EXAMPLES_POPEN=y
+CONFIG_SYSTEM_POPEN=y
+CONFIG_TESTING_DRIVER_TEST=y
+CONFIG_TESTING_DRIVER_TEST_STACKSIZE=8192
+CONFIG_FS_TMPFS=y
+CONFIG_FS_LINKS=y
+CONFIG_LIBC_SCANSET=y
+CONFIG_LIBC_LONG_LONG=y
+CONFIG_TESTS_TESTSUITES_MOUNT_DIR="/tmp"
+CONFIG_RTC_ALARM=y
+CONFIG_RTC_PERIODIC=y
+CONFIG_RTC_IOCTL=y
+CONFIG_RTC_DATETIME=y
+CONFIG_SIG_EVTHREAD=y
+CONFIG_ONESHOT=y
+CONFIG_ALARM_ARCH=y
+CONFIG_ONESHOT_COUNT=y
+CONFIG_LIBUV=y
+# CONFIG_LIBUV_BACKEND_EPOLL is not set
+CONFIG_LIBUV_EXTENSION=y
+CONFIG_UNQLITE=y
+CONFIG_BLUETOOTH=y
+CONFIG_BLUETOOTH_FRAMEWORK=y
+CONFIG_BLUETOOTH_FRAMEWORK_SOCKET_IPC=y
+CONFIG_BLUETOOTH_SERVER=y
+CONFIG_BLUETOOTH_IPC_JOIN_LOOP=y
+CONFIG_BLUETOOTH_STACK_BREDR_ZBLUE=y
+CONFIG_BLUETOOTH_BLE_SUPPORT=y
+CONFIG_BLUETOOTH_BLE_ADV=y
+CONFIG_BLUETOOTH_BLE_SCAN=y
+CONFIG_BLUETOOTH_LE_ADVERTISER_MAX_NUM=1
+CONFIG_BLUETOOTH_LE_SCANNER_MAX_NUM=1
+CONFIG_BLUETOOTH_SERVICE=y
+CONFIG_BLUETOOTH_STACK_LE_ZBLUE=y
+CONFIG_BLUETOOTH_STORAGE_UNQLITE_SUPPORT=y
+CONFIG_BLUETOOTH_SERVICE_HCI_UART_NAME="/dev/ttyHCI0"
+CONFIG_BLUETOOTH_TOOLS=y
+CONFIG_BT=y
+CONFIG_BT_H4=y
+CONFIG_BT_UART_ON_DEV_NAME="/dev/ttyHCI0"
+CONFIG_BT_GATT_DYNAMIC_DB=y
+CONFIG_BT_DEVICE_NAME_DYNAMIC=y
+CONFIG_TLS_NELEM=4
+CONFIG_TLS_TASK_NELEM=4
+CONFIG_CRYPTO_MBEDTLS=y
+CONFIG_BT_PERIPHERAL=y
+CONFIG_BT_CENTRAL=y
+CONFIG_BT_SMP=y
+CONFIG_BT_PRIVACY=y
+CONFIG_BT_MAX_PAIRED=4
+CONFIG_BT_MAX_CONN=3
+CONFIG_BT_DEVICE_NAME="openvela-EPG"
+CONFIG_BT_DEVICE_NAME_MAX=32
+CONFIG_BT_CLASSIC=y
+# CONFIG_BT_GATT_CACHING is not set
+# CONFIG_BT_HCI_ACL_FLOW_CONTROL is not set
+CONFIG_BT_GATT_CLIENT=y
+CONFIG_FS_LOCK_BUCKET_SIZE=4
+CONFIG_PTHREAD_MUTEX_TYPES=y
+CONFIG_BT_POWER_MODE_CONTROL=y
+CONFIG_NET=y
+CONFIG_NET_LOCAL=y
+CONFIG_NET_LOCAL_STREAM=y
+CONFIG_DRIVERS_WIRELESS=y
+CONFIG_DRIVERS_BLUETOOTH=y
+# CONFIG_BLUETOOTH_GATT_CLIENT is not set
+# CONFIG_BT_AVRCP is not set
+# CONFIG_BT_AVCTP is not set
+# CONFIG_BLUETOOTH_LOG is not set
+CONFIG_NETDEV_LATEINIT=y
+CONFIG_DEV_URANDOM=y
+CONFIG_DEV_URANDOM_XORSHIFT128=y
+CONFIG_SYSTEM_WORKQUEUE_STACK_SIZE=32768
+CONFIG_SYSTEM_WORKQUEUE_NO_YIELD=y
+CONFIG_UART_BTH4=y
+CONFIG_BT_EXT_ADV_LEGACY_SUPPORT=y
+
+#
+# Coverage for the xTS "general self-test" set, which the openvela porting
+# guide (docs/zh-cn/chip_porting/porting_guide.md, section 5) lists as
+# mandatory for a new platform.  Case numbers below refer to
+# docs/zh-cn/test_dev_guide/openvela_xts_test_cases.md.
+#
+# A warning that cost a day once: a symbol written here that no Kconfig in
+# this tree defines, or whose dependencies are unmet, is dropped in silence
+# -- the defconfig keeps the line and .config never gets it.  Every symbol
+# below was checked against nuttx/ and apps/ before being added.  The xTS
+# document names several symbols this tree does not have (CONFIG_CMOCKA is
+# TESTING_CMOCKA here, PSEUDOFS_SOFTLINKS is FS_LINKS, TESTS_TESTCASES and
+# FS_TEST do not exist at all); those are handled by the in-tree equivalent
+# rather than by copying the name across.
+#
+
+# The /etc ROMFS.  Required by the porting guide's board-layer checklist
+# (section 3.2, ETCROMFS) and read by case 1.1.12.  src/CMakeLists.txt bakes
+# src/etc into the image; sched/init/nx_bringup.c mounts it before init runs.
+CONFIG_FS_ROMFS=y
+CONFIG_ETC_ROMFS=y
+
+# 1.1.12 Kernel-md5.  The runner is board-supplied (src/md5_test.c) because
+# the document's CONFIG_TESTS_TESTCASES/FS_TEST do not exist here; CRYPTO is
+# what provides md5init/md5update/md5final.
+CONFIG_CRYPTO=y
+
+# 1.3.5 Flash/block device.  cmocka_driver_block reaches a block driver
+# through the block-to-character shim.
+CONFIG_BCH=y
+#
+# 1.3.16 (RNG / nist_sts) and 1.3.17 (Crypto / cryptodev) are NOT here.
+# This image is already at 92% of the 1728 KB app partition -- the closed
+# BLE stack and the display pipeline account for most of it -- and those two
+# suites together overflow it by 36 KB.  They live in configs/xts instead,
+# which is the image to flash when running the mandatory set.  Splitting is
+# the intended flow anyway: xTS is run against a verification build, not
+# against the product image.
+#
+
+# 1.3.15 Watchdog.  The case reads the reset cause back after each bite and
+# expects BOARDIOC_RESETCAUSE_SYS_RWDT; src/bk7258_reset.c answers it out of
+# the always-on PMU retention field.
+CONFIG_BOARDCTL_RESET_CAUSE=y
+
+# The NMI watchdog stage.  Without it the reset-cause field only ever reads
+# back what software last wrote, so an unannounced bite reports SYS_CHIPPOR
+# and case 1.3.15 fails on that assertion (it did, four runs out of four).
+CONFIG_BK7258_WDT_NMI=y
+
+# Ctrl-C on the console.  Without these a runaway foreground task cannot be
+# interrupted at all, and since NSH does not echo while one is running, a
+# merely slow task is indistinguishable from a dead board -- which is exactly
+# how the block-stress "hang" got misdiagnosed (PORTING_NOTES ch.17).
+CONFIG_SIG_DEFAULT=y
+CONFIG_TTY_SIGINT=y
+
+# 1.3.11 UART file transfer, and the only way to get bulk data onto this
+# board: the SD NAND is soldered (SDIO on GPIO14-19), so the expression
+# assets under /mnt cannot be written from a card reader.  "rb -d
+# /dev/console" receives a Ymodem batch from the host's lsz.
+CONFIG_SYSTEM_YMODEM=y
+CONFIG_SYSTEM_YMODEM_STACKSIZE=8192

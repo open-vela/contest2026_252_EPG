@@ -64,6 +64,240 @@ config BK7258_UART2
 	---help---
 		UART2 on GPIO40 (RX) / GPIO41 (TX), alternate GPIO30/GPIO31.
 
+config BK7258_WIFI
+	bool "WiFi network device"
+	default n
+	select NETDEVICES
+	select NETDEV_LATEINIT
+	select NETDEV_WIRELESS_HANDLER
+	select NETDEV_IOCTL
+	select NET_ETHERNET
+	select DRIVERS_IEEE80211
+	select WIRELESS
+	---help---
+		Register wlan0 as an 802.11 netdev lower half with wireless
+		extensions, per the openvela network driver guide.
+
+		**This cannot carry traffic yet.**  Bring-up currently reaches
+		mm_init() inside the closed MAC and faults there; the association
+		parameters and the wireless ioctls are real, but there is no RX or
+		TX path behind them yet.
+
+		On its own this registers wlan0 and nothing more.  Turn on
+		BK7258_WIFI_VENDOR as well to build and drive Beken's MAC.
+
+		See PORTING_NOTES chapter 21.
+
+config BK7258_WIFI_VENDOR
+	bool "Compile Beken's WiFi driver sources"
+	default n
+	depends on BK7258_WIFI
+	---help---
+		Build components/bk_wifi/src from the Beken SDK into this image.
+
+		The build flags come from the vendor's own build rather than from
+		guesswork -- see chip/bk7258_wifi_vendor.cmake for how to
+		regenerate them.  Two of them are not optional: without
+		-DBK_MAC=1 the version macro that gates half the driver is never
+		defined, and the 113 include directories have to keep their order
+		so that same-named headers resolve to the bk7258 copy.
+
+		Requires the Beken SDK checked out; BK_IDK_ROOT points at it.
+
+config BK7258_WIFI_ATE
+	bool "Answer yes to Beken's ATE (factory test) probe"
+	default n
+	depends on BK7258_WIFI_VENDOR
+	---help---
+		Make ate_is_enabled() report that the chip is in Beken's factory
+		test mode.  It is not -- that mode is entered by a strapping pin
+		their boot loader samples -- so this is a lie told deliberately,
+		and the product configuration should leave it off.
+
+		It exists because of one of the four places the stack asks.  With
+		the honest answer, rwnx_intf_init() ends wifi_init() by calling
+		rwnxl_sleep() and ps_env_set_ps_on(true): the MAC is parked in
+		doze with power save on, and this port has no wake machinery
+		outside the WiFi core thread.  Anything that reaches the MAC from
+		another context then finds it asleep, which is what the vendor's
+		own assert says -- "MAC is in doze, open maccore and phy clock",
+		at nxmac_current_state_getf:2001.  Beken's radio tools never meet
+		this because they run with ATE on.
+
+		The other three sites are harmless and, if anything, helpful:
+		rw_ieee80211_init sets a per-channel regulatory byte,
+		rwnx_handle_dynparams (rwnx_params.c:775) enables VHT/HE MCS 0-9,
+		and the fourth is the adapter slot itself.  None of them expects
+		test equipment on the other end of the radio, contrary to what the
+		comment in bk7258_wifi_shim.c used to claim.
+
+		bk7258_wifi_ate_enable() overrides this at run time; it has to be
+		called before bk7258_wifi_ifup(), which is where bk_wifi_init()
+		runs.
+
+config BK7258_WIFI_WPA
+	bool "WPA2/WPA3 via the vendor wpa_supplicant"
+	default n
+	depends on BK7258_WIFI_VENDOR
+	---help---
+		Compile Beken's wpa_supplicant 2.10 (open source, in the SDK) and
+		the mbedtls crypto subset it needs into the vendor object code,
+		enabling WPA2-PSK and WPA3-SAE association.  Without it the port
+		associates open-system only.
+
+		This is the vendor's own STA configuration: the same 78 supplicant
+		files its sta_connect build compiles (crypto backed by mbedtls, as
+		CONFIG_USE_MBEDTLS in the vendor sdkconfig dictates -- the
+		internal-crypto alternative preprocesses to empty objects under
+		that header and cannot be chosen from outside it).
+
+		Turning this on retires the shim's wpa_ctrl_*/sk_intf stubs and the
+		glue's own get_ie/get_security_type_from_ie -- the real supplicant
+		defines all of them -- and the received-EAPOL fork in
+		ethernetif_input becomes live so the 4-way handshake can happen.
+
+		One deliberate substitution: the supplicant's os_get_random() and
+		mbedtls's entropy source are rand()-backed in the vendor tree; here
+		both are rebound to arc4random_buf(), the CSPRNG this image already
+		carries.  SAE and the WPA2 nonces are only as good as this source.
+
+config BK7258_FLASH
+	bool "On-chip flash MTD"
+	default n
+	---help---
+		The flash controller at 0x44030000, exposing the part of the 8MB
+		SPI flash that no partition claims as an MTD device.
+
+		The firmware executes in place out of this same chip, so the region
+		is not negotiable: the vendor partition table ends at 0x400000 and
+		everything below it belongs to the boot loader, the three cores'
+		app images, and the RF calibration data that the BLE stack reads.
+		Only the space above that is offered, and the driver refuses any
+		address outside it rather than trusting its caller.
+
+		Note the two address spaces.  The controller inserts two CRC bytes
+		every 32 on the CPU's instruction path, so an XIP address is 32/34
+		of a physical one; the software register path used here is raw
+		physical bytes and no CRC is involved.  src/flashtest.c dumps the
+		controller state and known regions if that ever needs re-checking.
+
+if BK7258_FLASH
+
+config BK7258_FLASH_OFFSET
+	hex "Region start (physical byte offset)"
+	default 0x500000
+	---help---
+		Physical offset of the first sector the MTD may touch.  Must be
+		sector aligned.
+
+		The default is measured, not chosen for roundness.  The vendor
+		partition table fills exactly 0x400000 and stops; a scan of the
+		space above it found 0x400000..0x4d0000 already carrying
+		CRC-encoded erased content from the factory tooling, and nothing
+		between 0x4d0000 and 0x7fa000.  0x500000 clears the written part
+		with margin.
+
+config BK7258_FLASH_SIZE
+	hex "Region size in bytes"
+	default 0x2f0000
+	---help---
+		Length of the region, sector aligned.  The default ends at
+		0x7f0000, leaving the last 64KB alone: the top six sectors are in
+		use, and the one at 0x7fe000 begins with "TLV", which is factory
+		data this board's RF calibration is very likely to need.  Erasing
+		it is not something a test should be able to do by accident.
+
+config BK7258_FLASH_BLOCKSIZE
+	int "MTD read/write block size"
+	default 512
+	---help---
+		Must divide the 4096-byte erase sector and be a multiple of the
+		controller's 32-byte transfer unit.  512 is the default because
+		FAT expects sectors of at least that size.
+
+endif # BK7258_FLASH
+
+config BK7258_TIMER
+	bool "Oneshot timer (TIMER group 0)"
+	default n
+	select ONESHOT
+	select ONESHOT_COUNT
+	---help---
+		The timer group at 0x44810000, published as /dev/oneshot0.  Two of
+		its three channels are used: one is armed per request, the other
+		free runs as the timebase that ONESHOT_CURRENT reports.  Both sit
+		behind interrupt 3.
+
+		This does not touch the system tick.  The scheduler runs off the
+		AON RTC through arch_alarm(), and /dev/rtc0 owns that block's
+		alarm, so a test can hammer the oneshot without perturbing either.
+
+		The driver implements the count-based half of the oneshot
+		interface, hence the ONESHOT_COUNT select -- the two halves are
+		different function signatures behind the same struct, so the
+		symbol is a build requirement rather than a preference.
+
+config BK7258_RTC
+	bool "AON RTC"
+	default n
+	select RTC
+	select RTC_ARCH
+	select RTC_DRIVER
+	select RTC_EXTERNAL
+	select ONESHOT_COUNT if ALARM_ARCH
+	---help---
+		The always-on RTC counter at 0x44000200, used as the system time
+		source and published as /dev/rtc0.
+
+		RTC_EXTERNAL is selected even though this RTC is on-chip.  What
+		that symbol actually controls is *when* the OS expects a readable
+		clock: with it clear, clock_initialize() reads the RTC during
+		nx_start(), which is far too early here -- an AON access issued
+		before the domain is ready stalls the bus on this SoC, and the
+		driver's clock-rate measurement needs a running system tick
+		besides.  With it set, the OS waits and the clock is synchronised
+		from board_late_initialize() instead.
+
+		RTC_HIRES is deliberately not selected.  It would require
+		CONFIG_RTC_FREQUENCY as a compile-time constant, but the AON
+		counter runs from either the 32768 Hz crystal or the 32000 Hz
+		internal oscillator depending on what the bootloader selected, so
+		the rate is measured at init.  Naming one of them in a config
+		symbol would state something the driver cannot promise.
+
+config BK7258_WDT_NMI
+	bool "Watchdog NMI stage (stack dump before the reset)"
+	default n
+	---help---
+		Run the peripheral-domain watchdog at 0x44800000 alongside the
+		always-on one, with a shorter period so it bites first.  It raises
+		the NMI exception rather than resetting, which buys a stack dump and
+		-- more usefully -- a chance to record the bite in the always-on PMU
+		field, so the next boot reports BOARDIOC_RESETCAUSE_SYS_RWDT instead
+		of "power on".  The always-on watchdog still does the actual reset.
+
+		NMI is outside PRIMASK and BASEPRI on Cortex-M, so this stage lands
+		even from inside a critical section, which is what the xTS watchdog
+		case (1.3.15) requires of a driver.
+
+		Turning this off restores exactly the previous behaviour: the
+		always-on watchdog resets the chip with no dump and no recorded
+		reason.
+
+config BK7258_WDT
+	bool "Watchdog character driver (/dev/watchdog0)"
+	default n
+	select WATCHDOG
+	---help---
+		Publish the AON watchdog as /dev/watchdog0.
+
+		The SysTick heartbeat already re-arms this watchdog as the system's
+		lockup net, and that keeps working whether or not this is enabled.
+		What the driver adds is a deadline the heartbeat honours: once an
+		application starts /dev/watchdog0 and then stops pinging it, the
+		heartbeat arms the 6 ms boot period and the SoC resets promptly,
+		rather than waiting out the ~65 s running period.
+
 config BK7258_I2C1
 	bool "I2C1 (GPIO0 SCL / GPIO1 SDA)"
 	default n
@@ -204,3 +438,28 @@ config BK7258_SELFRESET_PROBE
 		off once the question is answered.
 
 endif # ARCH_CHIP_CUSTOM
+
+config BK7258_BATTERY
+	bool "Battery gauge (/dev/batt0)"
+	default n
+	select BATTERY_GAUGE
+	---help---
+		Cell voltage, charge percentage and charger state for the
+		ConvoAI Kit R1.  Voltage comes from SARADC channel 0, the
+		charger's two status pins are GPIO51 and GPIO26, and every
+		constant is taken from the vendor's own battery monitor
+		(bk_avdk_smp bk_batt_monitor/bat_monitor.c).
+
+		Charging itself needs no software: the ETA4322 on this board
+		runs on its own and exposes no control interface.  This driver
+		only reports.
+
+config BK7258_HCI_TRANSPORT
+	bool "H4 HCI transport character device"
+	default n
+	---help---
+		Register /dev/ttyHCI0, an H4 HCI byte pipe onto the closed BLE
+		controller, so the openvela Bluetooth service (and therefore
+		bttool and the xTS bluetooth cases) can drive this radio the
+		way it drives any other.  The node only carries traffic; the
+		controller is brought up separately.
